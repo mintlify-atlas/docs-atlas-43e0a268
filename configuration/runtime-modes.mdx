@@ -1,0 +1,148 @@
+---
+title: "Runtime modes"
+description: "Fenkit MCP runs as three separate servers, each exposing a scoped set of tools."
+---
+
+Fenkit MCP starts with a `--mode` flag that determines which tools are available. Three modes are defined: `admin`, `read-runtime`, and `write-runtime`. Running them as separate MCP server entries lets your AI client connect to all three simultaneously while keeping each server's capabilities tightly scoped.
+
+## The three modes
+
+<CardGroup cols={3}>
+  <Card title="admin" icon="key">
+    Authentication and client configuration. Required for first-time setup and re-authentication.
+  </Card>
+  <Card title="read-runtime" icon="magnifying-glass">
+    Task discovery, context retrieval, resources, and prompts. Safe for read-only agent operations.
+  </Card>
+  <Card title="write-runtime" icon="pen">
+    Task state mutations — setting status, persisting plans, and recording walkthroughs.
+  </Card>
+</CardGroup>
+
+## Tools per mode
+
+### admin
+
+| Tool | Description |
+|------|-------------|
+| `login` | Opens a browser for OAuth authentication and saves the token |
+| `get_status` | Returns current authentication state and active project |
+| `setup_client` | Writes MCP config files for a supported AI client |
+| `get_setup_instructions` | Returns raw config blocks to copy-paste without modifying files |
+
+### read-runtime
+
+| Tool | Description |
+|------|-------------|
+| `get_status` | Returns current authentication state and active project |
+| `list_projects` | Lists all available projects |
+| `select_project` | Sets the active project |
+| `get_active_project` | Returns the currently active project |
+    | Task read tools | `list_tasks`, `search_tasks`, `get_task_context_compact`, `get_task_context_full`, `get_task_section`, `get_active_tasks`, `get_tasks_in_review`, `resolve_chat_task` |
+
+The `read-runtime` server also registers **MCP resources** (contextual task data at `fenkit://context/tasks/active`, `fenkit://task/{taskId}/compact`, etc.) and **lifecycle prompts** (`task-plan`, `task-execute-checklist`, `task-walkthrough`, `task-rework`).
+
+### write-runtime
+
+| Tool | Description |
+|------|-------------|
+| `get_status` | Returns current authentication state and active project |
+| `list_projects` | Lists all available projects |
+| `select_project` | Sets the active project |
+| `get_active_project` | Returns the currently active project |
+| Task write tools | `set_task_status`, `set_task_priority`, `update_task_plan`, `update_task_walkthrough` |
+
+Lifecycle prompts (`task-plan`, `task-execute-checklist`, `task-walkthrough`, `task-rework`) are also registered on the write-runtime server.
+
+<Note>`login` is only available on the `admin` server. If a task-running agent needs to re-authenticate, it must use the `fenkit_admin` server connection.</Note>
+
+## Why three servers
+
+Using separate server processes per mode enforces the principle of least privilege at the transport layer. A read-only agent session physically cannot call write tools — they are not registered on that server. This prevents accidental state mutations during discovery and context-loading phases.
+
+The split also mirrors the Fenkit Task Protocol's own phases:
+
+- **Discovery** uses `read-runtime` tools and resources.
+- **Execution** uses `write-runtime` tools to persist plans, status changes, and walkthroughs.
+- **Setup and auth** use `admin` tools, typically run once per environment.
+
+## Starting modes manually
+
+You can start any mode directly with Node:
+
+```bash
+node dist/index.js --mode=read-runtime
+node dist/index.js --mode=write-runtime
+node dist/index.js --mode=admin
+```
+
+If `--mode` is omitted, the server defaults to `read-runtime`.
+
+## Recommended MCP config
+
+Register all three servers so your AI client can access every capability. Replace the path with the actual location of your `dist/index.js`.
+
+<Tabs>
+  <Tab title="JSON clients">
+    For Claude Desktop, Windsurf, Cursor, Claude Code, and Antigravity:
+
+    ```json
+    {
+      "mcpServers": {
+        "fenkit_read": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="OpenCode">
+    ```json
+    {
+      "mcp": {
+        "fenkit_read": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Codex (TOML)">
+    ```toml
+    [mcp_servers.fenkit_read]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+
+    [mcp_servers.fenkit_write]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+
+    [mcp_servers.fenkit_admin]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>Use `npx -y fenkit-mcp setup <client>` to write this config automatically with the correct server path. See [Client setup](/configuration/client-setup).</Tip>

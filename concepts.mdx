@@ -1,0 +1,181 @@
+---
+title: "Core Concepts"
+description: "Understand the Model Context Protocol, runtime modes, task lifecycle, idempotency, and the confirmation flow that power Fenkit MCP."
+---
+
+## Model Context Protocol (MCP)
+
+MCP is an open protocol that standardizes how AI agents communicate with external tools and data sources. Instead of hardcoding tool integrations into each AI client, MCP defines a client–server contract: the AI client connects to one or more MCP servers over stdio, and each server exposes a set of tools, resources, and prompts.
+
+Fenkit MCP implements this protocol to expose Fenkit's task management capabilities as first-class agent tools. When your agent calls `list_tasks`, `update_task_plan`, or `set_task_status`, it is invoking an MCP tool on one of the three Fenkit servers running in the background.
+
+<AccordionGroup>
+  <Accordion title="Why three separate servers?">
+    Fenkit MCP runs as three distinct server instances (`fenkit_read`, `fenkit_write`, `fenkit_admin`) because the MCP protocol assigns capability hints per server — `readOnlyHint`, `destructiveHint`, and so on. Separating concerns makes it clear to both the agent and the user which operations are safe reads, which mutate task state, and which handle authentication. It also allows you to grant only read access to contexts where writes are not appropriate.
+  </Accordion>
+  <Accordion title="How does the agent know to use Fenkit tools?">
+    During setup, Fenkit MCP injects a task protocol document into your AI client's rules file (`.cursor/rules/fenkit.mdc`, `.clauderules`, `~/.windsurfrules`, etc.). This document instructs the agent to call `get_status` at session start, follow the task lifecycle, and persist plans and walkthroughs automatically. No special prompting is required from you.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Runtime modes
+
+The three runtime modes each expose a different subset of tools.
+
+<Tabs>
+  <Tab title="read-runtime">
+    The read-runtime server handles discovery and context retrieval. All tools in this mode are read-only and safe to call at any time.
+
+    | Tool | Purpose |
+    | --- | --- |
+    | `get_status` | Check authentication state and active project |
+    | `list_projects` | List available Fenkit projects |
+    | `get_active_project` | Return the currently selected project |
+    | `list_tasks` | List tasks filtered by status |
+    | `search_tasks` | Find tasks by free-text query |
+    | `get_task_context_compact` | Token-efficient task context snapshot |
+    | `get_task_context_full` | Full task details including complete plan and walkthrough |
+    | `get_task_section` | Retrieve a single section (plan, walkthrough, or mcp_context) |
+    | `get_active_tasks` | Shortcut for active tasks (todo, in_progress, in_review) |
+    | `get_tasks_in_review` | List tasks waiting in review |
+    | `resolve_chat_task` | Resolve the task bound to a given `chat_id` |
+
+    Resources (`fenkit://context/tasks/active`, `fenkit://task/{taskId}/compact`, etc.) and lifecycle prompts (`task-plan`, `task-execute-checklist`, `task-walkthrough`, `task-rework`) are also registered on this server.
+
+
+  </Tab>
+  <Tab title="write-runtime">
+    The write-runtime server handles all state mutations. Tools here modify task data on the Fenkit backend.
+
+    | Tool | Purpose |
+    | --- | --- |
+    | `get_status` | Check authentication state and active project |
+    | `list_projects` | List available Fenkit projects |
+    | `select_project` | Set the active project |
+    | `update_task_plan` | Persist a structured implementation plan |
+    | `update_task_walkthrough` | Persist a structured walkthrough (moves task to `in_review`) |
+    | `set_task_status` | Move a task to a new lifecycle status |
+    | `set_task_priority` | Change a task's priority |
+
+    Lifecycle prompts are also registered on this server.
+  </Tab>
+  <Tab title="admin">
+    The admin server handles authentication and client configuration. It is used once at setup and then rarely again.
+
+    | Tool | Purpose |
+    | --- | --- |
+    | `login` | Open browser-based authentication flow |
+    | `get_status` | Check authentication state and active project |
+    | `setup_client` | Configure a supported AI client via MCP tool call |
+    | `get_setup_instructions` | Return manual config snippets for any client |
+  </Tab>
+</Tabs>
+
+---
+
+## Task lifecycle states
+
+Every task in Fenkit moves through a defined set of states. The agent reads the current state and advances it as work progresses.
+
+| Status | Meaning |
+| --- | --- |
+| `todo` | Task is ready to be worked on |
+| `in_progress` | Work is actively underway |
+| `in_review` | Implementation is complete; awaiting human review |
+| `done` | Task is accepted and closed |
+| `backlog` | Deferred — not currently prioritized |
+| `frozen` | Blocked or on hold |
+
+<AccordionGroup>
+  <Accordion title="How does a task reach in_review automatically?">
+    When the agent calls `update_task_walkthrough`, the server writes both the walkthrough content and sets the task status to `in_review` in a single atomic patch. The agent does not need to call `set_task_status` separately after submitting a walkthrough.
+  </Accordion>
+  <Accordion title="Can the agent mark a task as done?">
+    The `set_task_status` tool accepts `todo`, `in_progress`, `in_review`, `backlog`, and `frozen`. The `done` state is intentionally reserved for human reviewers in the Fenkit web UI — this enforces a human-in-the-loop acceptance step before closing work.
+  </Accordion>
+  <Accordion title="What are backlog and frozen for?">
+    `backlog` means the task exists but is not yet scheduled for active work. `frozen` means the task is blocked and cannot proceed until an external dependency is resolved. Agents can read tasks in these states but should not start work on them without explicit user instruction.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Idempotent operations and operation_id
+
+All write tools accept an `operation_id` parameter — a client-generated string that serves as an idempotency key. If the agent retries a write (due to a network error, context reset, or timeout), submitting the same `operation_id` with the same payload returns `result_code: duplicate_replayed` instead of applying the write twice.
+
+```
+result_code: duplicate_replayed
+```
+
+If the same `operation_id` is reused with a _different_ payload, the server returns `result_code: idempotency_conflict` and the write is rejected. This prevents accidental overwrites caused by recycled IDs.
+
+<AccordionGroup>
+  <Accordion title="What format should operation_id use?">
+    Any unique string works. A common pattern is `{tool}:{timestamp}:{task_prefix}`, for example `update_task_plan:1700000000000:22b50`. The agent generates this automatically; you do not need to provide it manually.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Preview / execute confirmation flow
+
+Sensitive write operations support a two-phase confirmation flow to prevent unintended mutations.
+
+**Phase 1 — preview:** The agent calls the tool with `execution_mode="preview"`. The server returns a `confirmation_token` and a summary of what will change, without modifying anything.
+
+```
+## set_task_status · preview
+- task_id: 22b50...
+- from_status: todo
+- to_status: in_progress
+- confirmation_token: tkn_abc123...
+- confirmation_expires_at: 2026-03-29T12:05:00Z
+- result_code: preview_ready
+```
+
+**Phase 2 — execute:** The agent re-calls the tool with `execution_mode="execute"` and the `confirmation_token` from the preview response. The server validates the token and applies the write.
+
+The following tools support this flow:
+- `select_project`
+- `set_task_status`
+- `set_task_priority`
+- `update_task_plan`
+- `update_task_walkthrough`
+
+<AccordionGroup>
+  <Accordion title="Is the confirmation flow always required?">
+    No. The confirmation flow is enabled only when `FENKIT_REQUIRE_CONFIRMATION=true` is set in the server environment. In most agent workflows it is disabled, and write tools execute directly. When disabled, passing `execution_mode="preview"` still works and returns a preview, but the token is not required to execute.
+  </Accordion>
+  <Accordion title="How long do confirmation tokens last?">
+    Tokens expire after a short window (a few minutes). If the agent waits too long between preview and execute, it must call preview again to obtain a fresh token.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Chat-task binding
+
+Fenkit MCP can maintain a persistent association between a specific chat session and a specific task. This is called a **chat-task binding**, and its key is the `chat_id` — a unique identifier that AI clients pass in request headers (`x-chat-id`, `x-thread-id`, etc.).
+
+At the start of each session, the agent calls `resolve_chat_task(chat_id)`. The server returns one of three states:
+
+| State | Meaning | Agent action |
+| --- | --- | --- |
+| `bound` | This chat is already associated with a task | Continue with the returned task context |
+| `unbound` | No association exists yet | Use `list_tasks` or `search_tasks` to select a task |
+| `needs_confirmation` | A previous binding exists but needs user confirmation | Ask the user which task to bind next; do not auto-bind silently |
+
+<AccordionGroup>
+  <Accordion title="What if chat_id is not available?">
+    If `chat_id` is not available in the session, the agent must not infer task binding from the chat title or name. Task selection must be explicit: call `list_tasks`, present the options, and wait for user input before proceeding.
+  </Accordion>
+  <Accordion title="How does the binding stay fresh?">
+    Every time the agent calls a read or write tool with a `chat_id` present (either explicitly or via request headers), the server sends a heartbeat to update the binding's `last_seen_at` timestamp. This keeps the binding active even across long coding sessions.
+  </Accordion>
+  <Accordion title="What happens after a context reset or compaction?">
+    After a context reset, call `get_status` to verify authentication and active project, then call `resolve_chat_task(chat_id)` again to restore the task context. If the agent has unsaved progress before a compaction event, it should immediately call `update_task_walkthrough` or `update_task_plan` to persist any in-flight work before context is trimmed.
+  </Accordion>
+</AccordionGroup>

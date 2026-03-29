@@ -1,0 +1,215 @@
+---
+title: "Task Walkthroughs"
+description: "How to submit task walkthroughs with update_task_walkthrough, including the full schema, auto-status transition, idempotency, and context compaction handling."
+---
+
+A walkthrough captures what was implemented, what decisions were made, and what was verified after execution. Submitting a walkthrough is the final step an agent takes before human review.
+
+The tool is `update_task_walkthrough`.
+
+<Warning>
+Calling `update_task_walkthrough` automatically moves the task status to `in_review`. No separate `set_task_status` call is needed — and calling it after a walkthrough submission would be redundant.
+</Warning>
+
+---
+
+## Walkthrough schema
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `summary` | string | Yes | 1–2000 chars |
+| `changes` | string[] | Yes | 1–80 items, each ≤240 chars |
+| `files_modified` | string[] | Yes | 1–120 items, each ≤260 chars |
+| `decisions` | string[] | No | ≤30 items |
+| `testing` | string[] | No | ≤30 items |
+| `known_issues` | string[] | No | ≤30 items |
+| `next_steps` | string[] | No | ≤30 items |
+| `notes` | string | No | ≤12000 chars, free-form markdown |
+
+<Note>
+`notes` is for free-form narrative context only. Do not duplicate information already present in `changes`, `decisions`, or other structured fields.
+</Note>
+
+### Complete example
+
+<CodeGroup>
+
+```json Walkthrough object (input)
+{
+  "summary": "Implemented OAuth 2.0 login via GitHub and Google using Passport.js. Both providers are working in integration tests. Email-collision edge case is handled by linking to the existing account. Session store migrated to PostgreSQL using connect-pg-simple.",
+  "changes": [
+    "Added GitHubStrategy and GoogleStrategy via passport-github2 and passport-google-oauth20",
+    "Created /auth/github and /auth/google callback routes with error handling",
+    "Added oauthProvider and oauthProviderId fields to the User model (migration: 0024)",
+    "Wrote findOrCreateOAuthUser: links by email if account exists, otherwise creates new",
+    "Replaced in-memory session store with connect-pg-simple backed by sessions table",
+    "Added GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to env schema",
+    "Updated .env.example with placeholder OAuth credentials",
+    "Wrote 14 integration tests covering callback success, error, and email-collision paths"
+  ],
+  "files_modified": [
+    "src/auth/strategies/github.ts",
+    "src/auth/strategies/google.ts",
+    "src/routes/auth.ts",
+    "src/auth/oauth-user.ts",
+    "src/models/user.ts",
+    "src/app.ts",
+    "migrations/0024_add_oauth_fields.sql",
+    "tests/auth/oauth.test.ts",
+    ".env.example",
+    "package.json",
+    "package-lock.json"
+  ],
+  "decisions": [
+    "Email-collision resolution links silently rather than prompting the user, to reduce friction on first OAuth login",
+    "Kept Passport.js over Auth.js because the project is Express-only with no Next.js dependency"
+  ],
+  "testing": [
+    "14 integration tests pass: GitHub callback (success + error), Google callback (success + error), email-collision link, new-user creation",
+    "Manually verified GitHub login in staging environment with a real OAuth app",
+    "Session persistence confirmed across page reloads after PostgreSQL store migration"
+  ],
+  "known_issues": [
+    "OAuth-only users cannot set a password post-registration — product decision still pending (see open question in plan)"
+  ],
+  "next_steps": [
+    "Product decision needed: allow OAuth users to add a password via account settings",
+    "Consider adding LinkedIn as a third OAuth provider in a follow-up task"
+  ],
+  "notes": "The connect-pg-simple migration required a new `sessions` table. The migration script is idempotent and can be re-run safely."
+}
+```
+
+```markdown Persisted walkthrough markdown
+## Summary
+Implemented OAuth 2.0 login via GitHub and Google using Passport.js. Both providers are working in integration tests. Email-collision edge case is handled by linking to the existing account. Session store migrated to PostgreSQL using connect-pg-simple.
+
+## Changes
+- Added GitHubStrategy and GoogleStrategy via passport-github2 and passport-google-oauth20
+- Created /auth/github and /auth/google callback routes with error handling
+- Added oauthProvider and oauthProviderId fields to the User model (migration: 0024)
+- Wrote findOrCreateOAuthUser: links by email if account exists, otherwise creates new
+- Replaced in-memory session store with connect-pg-simple backed by sessions table
+- Added GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to env schema
+- Updated .env.example with placeholder OAuth credentials
+- Wrote 14 integration tests covering callback success, error, and email-collision paths
+
+## Files Modified
+- `src/auth/strategies/github.ts`
+- `src/auth/strategies/google.ts`
+- `src/routes/auth.ts`
+- `src/auth/oauth-user.ts`
+- `src/models/user.ts`
+- `src/app.ts`
+- `migrations/0024_add_oauth_fields.sql`
+- `tests/auth/oauth.test.ts`
+- `.env.example`
+- `package.json`
+- `package-lock.json`
+
+## Decisions
+- Email-collision resolution links silently rather than prompting the user, to reduce friction on first OAuth login
+- Kept Passport.js over Auth.js because the project is Express-only with no Next.js dependency
+
+## Testing
+- 14 integration tests pass: GitHub callback (success + error), Google callback (success + error), email-collision link, new-user creation
+- Manually verified GitHub login in staging environment with a real OAuth app
+- Session persistence confirmed across page reloads after PostgreSQL store migration
+
+## Known Issues
+- OAuth-only users cannot set a password post-registration — product decision still pending (see open question in plan)
+
+## Next Steps
+- Product decision needed: allow OAuth users to add a password via account settings
+- Consider adding LinkedIn as a third OAuth provider in a follow-up task
+
+## Notes
+The connect-pg-simple migration required a new `sessions` table. The migration script is idempotent and can be re-run safely.
+```
+
+</CodeGroup>
+
+---
+
+## Completion flow
+
+<Steps>
+  <Step title="Verify the implementation">
+    Run tests, check functionality, and confirm the task's acceptance criteria are met before submitting the walkthrough.
+  </Step>
+
+  <Step title="Submit the walkthrough">
+    Call `update_task_walkthrough` with the complete walkthrough object. Include all changes, modified files, and key decisions.
+
+    ```json
+    {
+      "taskId": "abc12",
+      "operation_id": "wt:task-abc12:2025-03-29",
+      "walkthrough": { ... },
+      "mode": "full",
+      "model": "claude-sonnet-4-20250514",
+      "agent": "cursor"
+    }
+    ```
+
+    On success, the task status is automatically set to `in_review`.
+  </Step>
+
+  <Step title="Confirm the result">
+    The tool response confirms the new status:
+
+    ```
+    ✔ Walkthrough updated for task `abc12`.
+
+    Mode: full
+    Changes: 8
+    Files modified: 11
+    Status: in_review
+    result_code: applied
+    ```
+
+    The task is now in the hands of the human reviewer. No further agent action is needed.
+  </Step>
+</Steps>
+
+---
+
+## The `mode` field
+
+| Value | When to use |
+|---|---|
+| `"mini"` | The agent is submitting a brief, fallback-level walkthrough (default if omitted) |
+| `"full"` | The agent has produced a complete, detailed walkthrough capturing all work |
+
+Use `"full"` whenever the agent has thorough records of all changes made. `"mini"` is a fallback for cases where context limits prevent a detailed walkthrough.
+
+---
+
+## Idempotency: `duplicate_replayed`
+
+If `update_task_walkthrough` is called with a walkthrough that **already matches the persisted content** and the task status is already `in_review`, the server returns:
+
+```
+result_code: duplicate_replayed
+```
+
+No write occurs. This is safe to receive — it means the operation was already successfully applied (typically from a prior retry).
+
+If the walkthrough content differs from what is stored, or if the status is not `in_review`, a full write is performed.
+
+---
+
+## Context compaction handling
+
+Long-running agent sessions can have their context window trimmed by the client. If context compaction occurs mid-task, the agent must re-orient before proceeding.
+
+**If compaction happens during active implementation:**
+
+1. Immediately call `update_task_walkthrough` with an in-progress walkthrough capturing work done so far. Use `mode="mini"` if necessary.
+2. This persists partial progress to the task record so it survives the context reset.
+3. Re-orient by calling `get_status` and `resolve_chat_task(chat_id)` to reload context.
+4. Resume implementation from where the partial walkthrough left off.
+
+<Tip>
+Submit interim walkthroughs proactively during long tasks, not just at completion. This keeps the task record current and reduces recovery cost if context is trimmed.
+</Tip>

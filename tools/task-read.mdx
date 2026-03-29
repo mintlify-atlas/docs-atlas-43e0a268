@@ -1,0 +1,308 @@
+---
+title: "Task read tools"
+description: "Tools for discovering, searching, and retrieving task context. Available in read-runtime mode."
+---
+
+These tools are registered by `registerTaskReadTools()` and are available on the `fenkit_read` server (`read-runtime` mode). All tools are read-only: they never modify task state.
+
+<Info>
+  Read tools are served by the `fenkit_read` MCP server. Make sure your client config registers the server with `--mode=read-runtime`. See [Client setup](/configuration/client-setup).
+</Info>
+
+## Tool overview
+
+<CardGroup cols={2}>
+  <Card title="resolve_chat_task" icon="link">
+    Resolve the active task bound to a chat or thread ID. Call this at session start to auto-load context.
+  </Card>
+  <Card title="list_tasks" icon="list">
+    List all tasks in the active project, grouped by status with icons, priorities, and tags.
+  </Card>
+  <Card title="search_tasks" icon="magnifying-glass">
+    Find tasks by free-text query matched against titles and descriptions.
+  </Card>
+  <Card title="get_task_context_compact" icon="compress">
+    Retrieve a token-efficient snapshot of a task. The right default for most agent workflows.
+  </Card>
+  <Card title="get_task_context_full" icon="expand">
+    Retrieve the complete task record including full plan and walkthrough text.
+  </Card>
+  <Card title="get_task_section" icon="file-lines">
+    Retrieve a single section of task context: `plan`, `walkthrough`, or `mcp_context`.
+  </Card>
+  <Card title="get_active_tasks" icon="circle-check">
+    List all tasks with status `todo`, `in_progress`, or `in_review` — no filtering required.
+  </Card>
+  <Card title="get_tasks_in_review" icon="eye">
+    List all tasks currently waiting in review.
+  </Card>
+</CardGroup>
+
+---
+
+## resolve_chat_task
+
+Use at the start of a chat or session to deterministically resolve the task bound to this `chat_id`. When a binding exists, the response includes a compact context snapshot so the agent can immediately begin working.
+
+<ParamField body="chat_id" type="string" required>
+  Chat or thread identifier used as the deterministic binding key. Maximum 120 characters.
+</ParamField>
+
+<ParamField body="maxChars" type="integer">
+  Maximum characters for compact context fields when `state=bound`. Range: 500–12000. Defaults to 3500.
+</ParamField>
+
+### Response
+
+<ResponseField name="state" type="string" required>
+  Binding resolution result. One of:
+
+  - `bound` — a task is actively bound to this chat ID
+  - `unbound` — no binding exists for this chat ID
+  - `needs_confirmation` — a binding exists but requires user confirmation
+</ResponseField>
+
+<ResponseField name="project_id" type="string">
+  Project ID of the bound task. Present when `state=bound` or `state=needs_confirmation`.
+</ResponseField>
+
+<ResponseField name="task_id" type="string">
+  Task ID of the bound task. Present when `state=bound` or `state=needs_confirmation`.
+</ResponseField>
+
+<ResponseField name="compact_context" type="string">
+  Token-efficient task context snapshot. Included only when `state=bound`.
+</ResponseField>
+
+### Error codes
+
+| Code | Description |
+|------|-------------|
+| `CHAT_ID_REQUIRED` | `chat_id` was empty or missing. Provide a non-empty chat ID. |
+
+---
+
+## list_tasks
+
+List tasks in the active project, optionally filtered by one or more status values. Results are grouped by status and sorted in workflow order: `in_progress` → `in_review` → `todo` → `frozen` → `backlog` → `done`.
+
+<ParamField body="status" type="string">
+  Comma-separated status filter. Default: `"todo,in_progress,in_review"`.
+
+  Valid values: `todo`, `in_progress`, `in_review`, `done`, `backlog`, `frozen`.
+
+  Example: `"todo,in_progress"` or `"in_review"`.
+</ParamField>
+
+### Example output
+
+```text
+## Tasks in My Project
+
+### 🏗️ IN PROGRESS
+- **Refactor auth module** (`a3f91`) · high [backend]
+
+### 🔍 IN REVIEW
+- **Add rate limiting** (`22b50`) · medium [api] — Adds per-IP rate limiting to public endpoin...
+
+### 📋 TODO
+- **Write migration guide** (`c7d22`) · low [docs]
+- **Fix null pointer in parser** (`e9a11`) · urgent [bug] — Crash when parsing malformed JSON inp...
+```
+
+---
+
+## search_tasks
+
+Search for tasks by free-text query. The query is matched against task titles and descriptions.
+
+<ParamField body="query" type="string" required>
+  Search query. Minimum 2 characters, maximum 120 characters.
+</ParamField>
+
+### Response
+
+Returns a list of matching tasks with title, short ID, status icon, status, and priority.
+
+---
+
+## get_task_context_compact
+
+Retrieve a token-efficient context snapshot for a specific task. Use this as the default way to load task context before working. Long fields such as the plan and description are truncated to `maxChars`.
+
+<Tip>
+  Prefer `get_task_context_compact` over `get_task_context_full` unless you need the complete plan or walkthrough text. It uses significantly fewer tokens.
+</Tip>
+
+<ParamField body="taskId" type="string" required>
+  Task ID. Accepts a full UUID (`a3f91b2e-...`) or a short prefix (`a3f91`). Minimum 4 characters.
+</ParamField>
+
+<ParamField body="maxChars" type="integer">
+  Maximum characters for long text fields (description, plan summary, walkthrough summary). Range: 500–12000. Default: 3500.
+</ParamField>
+
+### Example output
+
+```text
+# Refactor auth module
+
+**ID**: `a3f91b2e-4c1d-4e8f-b3a2-000000000001` · **Status**: 🏗️ in_progress · **Priority**: high
+**Tags**: backend, security
+
+## Description (compact)
+Extract the authentication logic from `src/app.ts` into a dedicated `src/auth/` module. Covers
+JWT validation, session management, and OAuth callback handling...
+
+## Plan Summary
+## Summary
+Move auth logic to standalone module with clean interfaces.
+
+## Steps
+- Create `src/auth/index.ts` entry point
+- Extract `validateJwt()` from `app.ts`...
+
+## Latest Chat Context
+- Actor: cursor
+- Tool: update_task_plan
+- Chat ID: chat_20250512_abc123
+- Chat name: Auth refactor session
+- Last seen: 2025-05-12T14:23:11.000Z
+
+> Compact mode intentionally omits full sections. Call `get_task_context_full` or `get_task_section` if needed.
+```
+
+---
+
+## get_task_context_full
+
+Retrieve the complete task record, including the full plan and walkthrough text without truncation. Use when compact context is insufficient — for example, when reviewing a long implementation plan.
+
+<ParamField body="taskId" type="string" required>
+  Task ID. Accepts a full UUID or a short prefix of at least 4 characters.
+</ParamField>
+
+### Response
+
+Returns all task fields: title, ID, status, priority, tags, full description, full plan (if set), full walkthrough (if set), and MCP context metadata as a JSON block.
+
+---
+
+## get_task_section
+
+Retrieve a single named section of a task. Use when you only need one part of the context — for example, to review the plan without loading the full record.
+
+<ParamField body="taskId" type="string" required>
+  Task ID. Accepts a full UUID or a short prefix of at least 4 characters.
+</ParamField>
+
+<ParamField body="section" type="string" required>
+  Section to retrieve. One of:
+
+  - `plan` — the task's implementation plan
+  - `walkthrough` — the post-implementation walkthrough
+  - `mcp_context` — the latest MCP execution metadata as JSON
+</ParamField>
+
+<ParamField body="maxChars" type="integer">
+  Maximum characters for the section payload. Range: 500–12000. Default: 3500.
+</ParamField>
+
+---
+
+## get_active_tasks
+
+List all tasks with status `todo`, `in_progress`, or `in_review`. This is a convenience shortcut — equivalent to calling `list_tasks` with `status="todo,in_progress,in_review"` but requires no parameters.
+
+This tool takes no parameters.
+
+### Response
+
+Returns a markdown list of active tasks with title, short ID, status, and priority.
+
+---
+
+## get_tasks_in_review
+
+List all tasks currently in the `in_review` status — tasks that have been implemented and are awaiting approval or merge.
+
+This tool takes no parameters.
+
+### Response
+
+Returns a markdown list of in-review tasks with title, short ID, and priority.
+
+---
+
+## MCP Resources
+
+The `read-runtime` server also registers MCP resources — subscribed data sources that agents can read without calling a tool. Resources use URIs in the `fenkit://` scheme.
+
+| Resource name | URI | Description |
+|---|---|---|
+| `active_tasks_context` | `fenkit://context/tasks/active` | Active tasks (todo, in_progress, in_review) as Markdown |
+| `review_tasks_context` | `fenkit://context/tasks/in-review` | Tasks currently in review as Markdown |
+| `task_compact_template` | `fenkit://task/{taskId}/compact` | Compact context for a specific task. Accepts `?maxChars=N` |
+| `task_section_template` | `fenkit://task/{taskId}/section/{section}` | Single section of a task: `plan`, `walkthrough`, or `mcp_context`. Accepts `?maxChars=N` |
+| `task_lifecycle_template` | `fenkit://task/{taskId}/lifecycle` | Lifecycle snapshot: status, priority, last tool, last operation, last chat, last seen |
+| `observability_summary` | `fenkit://context/observability/summary` | Live MCP tool-call metrics snapshot (JSON) for diagnostics |
+
+All resources return `text/markdown` unless noted otherwise. Template URIs with `{taskId}` accept any task identifier — full UUID or short prefix.
+
+<Note>
+  Resources are passive data sources. They do not write state or update chat-task bindings. Use them to load context without triggering side effects.
+</Note>
+
+---
+
+## Lifecycle Prompts
+
+The `read-runtime` and `write-runtime` servers register built-in MCP prompts that generate structured agent instructions. Use them to bootstrap task-focused workflows without custom prompt engineering.
+
+### `task-plan`
+
+Generate a compact-first planning prompt for a task.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | Yes | Task ID (full UUID or short prefix, 4–64 chars) |
+| `maxChars` | integer | No | Max chars for context fields. Range: 500–12000 |
+
+Returns a user message: `Create a structured implementation plan for this task using compact context first.` followed by the compact task context.
+
+### `task-execute-checklist`
+
+Return an execution checklist aligned with the Fenkit lifecycle.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | Yes | Task ID |
+
+Returns the standard execution checklist:
+- Load compact context first
+- Expand only required sections
+- Persist plan before execution updates
+- Move status to `in_progress` when coding starts
+- Persist walkthrough when done (status to `in_review`)
+
+### `task-walkthrough`
+
+Generate a post-execution walkthrough prompt for a task.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | Yes | Task ID |
+| `maxChars` | integer | No | Max chars for context fields. Range: 500–12000 |
+
+Returns a user message: `Prepare a structured implementation walkthrough for this task.` followed by the compact task context.
+
+### `task-rework`
+
+Generate a rework prompt using compact context and the latest walkthrough.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | Yes | Task ID |
+| `maxChars` | integer | No | Max chars for context fields. Range: 500–12000 |
+
+Returns a user message with both the compact context and the latest walkthrough section, framed as: `Use this compact context and latest walkthrough to plan the rework.`

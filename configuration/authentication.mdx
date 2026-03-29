@@ -1,0 +1,91 @@
+---
+title: "Authentication"
+description: "Authenticate with Fenkit using a browser-based flow. Your token is saved automatically."
+---
+
+Fenkit uses a browser-based authentication flow. The `login` tool handles everything — it opens your browser, waits for you to sign in, and saves the token to disk without any manual steps.
+
+## Signing in
+
+<Steps>
+  <Step title="Call the login tool">
+    From your AI client, invoke the `login` tool on the `fenkit_admin` server:
+
+    ```
+    login()
+    ```
+
+    The tool starts a temporary local callback server on a random port, then opens your browser.
+
+    <Warning>The `login` tool is only available on the `admin` server (`fenkit_admin`). Make sure that server is registered and running before calling `login`.</Warning>
+  </Step>
+  <Step title="Sign in to Fenkit">
+    Your browser opens to the Fenkit authentication page. Sign in with your account credentials.
+  </Step>
+  <Step title="Token is saved automatically">
+    After sign-in, the browser sends your token back to the local callback server. The token is validated against the Fenkit API, then saved to disk.
+
+    <Note>Your token is stored in `~/.fnk/config.json`. The file is created with permissions `0600` (owner read/write only) on macOS and Linux.</Note>
+
+    If you have exactly one project, it is automatically set as the active project. Otherwise, you will be prompted to call `list_projects` and `select_project`.
+  </Step>
+  <Step title="Verify authentication">
+    Call `get_status` to confirm everything is working:
+
+    ```
+    get_status()
+    ```
+
+    A successful response looks like:
+
+    ```
+    Authenticated: ✅ Yes
+    API URL: https://ickit-be.vercel.app/api/v1
+    Active Project: My Project
+    Project ID: proj_abc123
+    ```
+  </Step>
+</Steps>
+
+## Checking authentication status
+
+Call `get_status` at any time to check your current state. It returns:
+
+| Field | Description |
+|-------|-------------|
+| `Authenticated` | Whether a valid token is present |
+| `API URL` | The API endpoint the server is pointing to |
+| `Active Project` | Name of the currently selected project, if any |
+| `Project ID` | ID of the currently selected project, if any |
+
+`get_status` is available on all three servers (`fenkit_admin`, `fenkit_read`, `fenkit_write`). Call it at the start of every session to verify your token and active project before starting work.
+
+## Login timeout
+
+The authentication flow times out after **2 minutes**. If you do not complete sign-in within that window, you will see:
+
+```
+Authentication failed: Authentication timed out after 2 minutes.
+```
+
+Call `login` again to start a new authentication attempt.
+
+## When token is missing or expired
+
+If your token is missing or has expired, tool calls that require authentication will return an error:
+
+```
+NOT_AUTHENTICATED: No token found. Run the `login` tool or configure ~/.fnk/config.json with your API key.
+```
+
+Call `login` again to re-authenticate. The new token overwrites the previous value in `~/.fnk/config.json`.
+
+## When no project is selected
+
+If you are authenticated but have not selected a project, write operations and project-scoped reads will return:
+
+```
+NO_ACTIVE_PROJECT: No project selected. Use `select_project` or `list_projects` first.
+```
+
+Call `list_projects` to see available projects, then `select_project` to set the active one. Both tools are available on `fenkit_read` and `fenkit_write`.

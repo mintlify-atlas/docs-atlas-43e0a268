@@ -1,0 +1,201 @@
+---
+title: "Project tools"
+description: "MCP tools for listing, inspecting, and switching between Fenkit projects."
+---
+
+Project tools let your AI agent discover which Fenkit projects are available and switch the active project that subsequent task operations run against.
+
+<CardGroup cols={3}>
+  <Card title="list_projects" icon="list" href="#list_projects">
+    List all accessible projects.
+  </Card>
+  <Card title="get_active_project" icon="circle-dot" href="#get_active_project">
+    Show the currently active project.
+  </Card>
+  <Card title="select_project" icon="arrow-right-arrow-left" href="#select_project">
+    Set a project as active.
+  </Card>
+</CardGroup>
+
+---
+
+## list_projects
+
+List all Fenkit projects your API token can access. Marks the currently active project inline.
+
+**Behavior hints:** read-only, idempotent, open-world (calls the Fenkit API).
+
+### Parameters
+
+This tool takes no parameters.
+
+### Response
+
+Returns a Markdown-formatted list of projects. Each entry includes the project name, a shortened project ID, an optional description, and an `← active` marker on the current project.
+
+```text example response
+## Projects
+
+- **Acme Backend** (`3fa85f64`) — Core API services ← **active**
+- **Acme Frontend** (`7c9e6679`) — Next.js web app
+- **Data Pipeline** (`a1b2c3d4`)
+```
+
+<ResponseField name="content[].text" type="string">
+  Formatted Markdown string listing all projects. Includes name, short ID (first 8 characters), optional description, and an `← active` marker on the selected project.
+</ResponseField>
+
+### Errors
+
+| Condition | Message prefix |
+|---|---|
+| Not authenticated | `Error: NOT_AUTHENTICATED` |
+| API request failure | `Error: <api error message>` |
+| No projects exist | `No projects found. Create one in the Fenkit web UI first.` |
+
+---
+
+## get_active_project
+
+Return the project currently selected in the local configuration. This is a local read — it does not call the Fenkit API.
+
+**Behavior hints:** read-only, idempotent, closed-world (reads local config only).
+
+### Parameters
+
+This tool takes no parameters.
+
+### Response
+
+```text example response — project selected
+**Active Project**: Acme Backend
+**ID**: `3fa85f640000`
+```
+
+```text example response — no project selected
+No active project. Use `list_projects` and `select_project` to choose one.
+```
+
+<ResponseField name="content[].text" type="string">
+  When a project is active: a two-line string with the project name and full project ID. When no project is selected: a prompt to run `list_projects` and `select_project`.
+</ResponseField>
+
+### Errors
+
+| Condition | Message prefix |
+|---|---|
+| Not authenticated | `Error: NOT_AUTHENTICATED` |
+
+---
+
+## select_project
+
+Set a project as the active project. All subsequent task operations will run against this project.
+
+**Behavior hints:** write, idempotent, closed-world (updates local config; verifies project existence via API).
+
+<Note>
+  The active project is persisted to `~/.fnk/config.json` as `currentProjectId` and `currentProjectName`. All tools that call `requireProject()` will read this value.
+</Note>
+
+### Parameters
+
+<ParamField body="projectId" type="string" required>
+  The project ID to activate. Must be 4–64 characters. You can supply a prefix — the tool matches the first project whose full ID starts with the given string.
+</ParamField>
+
+<ParamField body="mode" type="string">
+  Confirmation mode. `"preview"` returns a `confirmation_token` without applying the change. `"execute"` applies the change. When `FENKIT_REQUIRE_CONFIRMATION=true` is set, preview mode is the default and a token is required to execute.
+</ParamField>
+
+<ParamField body="confirmation_token" type="string">
+  Token returned by a prior `mode="preview"` call. Required when `FENKIT_REQUIRE_CONFIRMATION=true` is set and `mode="execute"`. Must be 8–200 characters.
+</ParamField>
+
+<ParamField body="operation_id" type="string">
+  Client-generated idempotency key (8–128 alphanumeric characters, plus `._:-`). Recommended for all write calls. Re-submitting the same `operation_id` with an identical payload returns `result_code: duplicate_replayed` without re-applying the change.
+</ParamField>
+
+<ParamField body="model" type="string">
+  Model identifier recorded in the local audit log (e.g. `gpt-4.1`, `claude-sonnet`). Optional execution metadata.
+</ParamField>
+
+<ParamField body="agent" type="string">
+  Agent or client name recorded in the local audit log (e.g. `cursor`, `claude-desktop`). Optional execution metadata.
+</ParamField>
+
+<ParamField body="tokens" type="object">
+  Token usage for this operation. Optional execution metadata.
+
+  <Expandable title="tokens properties">
+    <ResponseField name="input" type="number">Input tokens consumed.</ResponseField>
+    <ResponseField name="output" type="number">Output tokens produced.</ResponseField>
+    <ResponseField name="total" type="number">Total tokens used.</ResponseField>
+    <ResponseField name="estimate" type="number">Estimated token count when exact values are unavailable.</ResponseField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+<ResponseField name="content[].text" type="string">
+  In `execute` mode: a confirmation message with the new project name and short ID, followed by `result_code: applied`. In `preview` mode: a structured preview block (see below).
+</ResponseField>
+
+```text example response — execute mode
+✔ Active project set to **Acme Backend** (`3fa85f64`)
+
+result_code: applied
+```
+
+### Preview/execute confirmation flow
+
+When `FENKIT_REQUIRE_CONFIRMATION=true` is set, `select_project` defaults to `mode="preview"`. You must complete a two-step flow before the change is applied.
+
+<Steps>
+  <Step title="Call with mode=&quot;preview&quot;">
+    The tool returns a summary of the change and a `confirmation_token`. No state is modified.
+
+    ```text preview response
+    ## select_project · preview
+    - from: Acme Frontend (7c9e667900000000...)
+    - to: Acme Backend (3fa85f6400000000...)
+    - operation_id: select_project:1711234567890:3fa85f64
+    - payload_hash: sha256:abcd1234...
+    - confirmation_token: eyJhbGci...
+    - confirmation_expires_at: 2026-03-29T12:05:00.000Z
+    - result_code: preview_ready
+    ```
+  </Step>
+
+  <Step title="Review the preview">
+    Confirm the `from` and `to` project values are correct. Note the `confirmation_expires_at` timestamp — tokens expire and cannot be reused.
+  </Step>
+
+  <Step title="Call with mode=&quot;execute&quot; and confirmation_token">
+    Pass the token from step 1. The tool validates it, applies the change, and writes an audit log entry.
+
+    ```text execute response
+    ✔ Active project set to **Acme Backend** (`3fa85f64`)
+
+    result_code: applied
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Confirmation tokens are single-use and short-lived. If the token expires before you call `mode="execute"`, repeat the preview step to obtain a new token.
+</Warning>
+
+### Idempotency
+
+If you re-submit a `select_project` call with the same `operation_id` and the same target project, the server returns `result_code: duplicate_replayed` and does not modify config or audit logs again. Submitting the same `operation_id` with a **different** `projectId` returns `IDEMPOTENCY_CONFLICT` as an error.
+
+### Errors
+
+| Condition | `isError` | Message |
+|---|---|---|
+| Project not found | `true` | `Project "<id>" not found. Use \`list_projects\` to see available projects.` |
+| Sensitive confirmation required but no token supplied | `true` | `CONFIRMATION_REQUIRED: call with mode="preview" first, then execute with confirmation_token.` |
+| `operation_id` reused with a different payload | `true` | `IDEMPOTENCY_CONFLICT: operation_id "…" was reused with a different payload.` |
+| Not authenticated | `true` | `Error: NOT_AUTHENTICATED` |
+| API request failure | `true` | `Error: <api error message>` |

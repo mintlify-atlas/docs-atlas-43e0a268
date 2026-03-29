@@ -1,0 +1,105 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Fenkit MCP",
+  "projectDescription": "An MCP (Model Context Protocol) server that connects AI agents to the Fenkit task management platform, enabling autonomous task discovery, planning, execution tracking, and structured documentation.",
+  "theme": "luma",
+  "primaryColor": "#848c8e",
+  "lightColor": "#11161e",
+  "darkColor": "#cfd0d2",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "concepts"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/client-setup",
+              "configuration/runtime-modes",
+              "configuration/authentication"
+            ]
+          },
+          {
+            "group": "Task Lifecycle",
+            "pages": [
+              "guides/task-lifecycle",
+              "guides/planning",
+              "guides/walkthroughs",
+              "guides/chat-task-binding"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/protocol",
+              "reference/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tool Reference",
+        "groups": [
+          {
+            "group": "Auth & Setup",
+            "pages": [
+              "tools/auth",
+              "tools/setup"
+            ]
+          },
+          {
+            "group": "Projects",
+            "pages": [
+              "tools/projects"
+            ]
+          },
+          {
+            "group": "Task Tools",
+            "pages": [
+              "tools/task-read",
+              "tools/task-write"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "One-command setup for 7 AI clients (Cursor, Claude Desktop, Windsurf, Claude Code, Codex, OpenCode, Antigravity)",
+    "Three runtime modes: read-runtime, write-runtime, and admin for granular access control",
+    "Autonomous task lifecycle management: discovery, planning, execution, and walkthrough documentation",
+    "Chat-task binding for deterministic task context resolution across sessions",
+    "Idempotent write operations with optional preview/confirmation flow for sensitive changes",
+    "Automatic protocol injection into client rule files for consistent AI agent behavior",
+    "Compact and full task context retrieval to optimize LLM token usage"
+  ],
+  "publicApiSurface": [
+    "login — browser-based OAuth authentication",
+    "get_status — check auth and active project",
+    "list_projects — list available projects",
+    "select_project — set active project",
+    "get_active_project — retrieve currently active project",
+    "list_tasks — list tasks with optional status filter",
+    "search_tasks — free-text task search",
+    "get_task_context_compact — token-efficient task context snapshot",
+    "get_task_context_full — full task details including plan and walkthrough",
+    "get_task_section — retrieve a specific section of task context",
+    "get_active_tasks — list active work items",
+    "get_tasks_in_review — list tasks awaiting review",
+    "resolve_chat_task — resolve chat-to-task binding by chat_id",
+    "update_task_plan — persist structured implementation plan",
+    "update_task_walkthrough — persist implementation walkthrough (auto-sets in_review)",
+    "set_task_status — change task lifecycle status",
+    "set_task_priority — change task priority",
+    "setup_client — configure an AI client to use Fenkit MCP",
+    "get_setup_instructions — retrieve manual config snippets without writing files"
+  ]
+}

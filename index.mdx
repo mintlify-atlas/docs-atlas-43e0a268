@@ -1,97 +1,57 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Fenkit MCP"
+description: "Connect your AI agents to Fenkit — the task coordination layer for autonomous development workflows."
 ---
 
-## Setting up
+Fenkit MCP is a [Model Context Protocol](https://modelcontextprotocol.io) server that bridges your AI agent (Cursor, Claude, Windsurf, and more) with the Fenkit task management platform. Your agent can discover tasks, create structured plans, track execution progress, and submit completion walkthroughs — all without any copy-paste.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Set up Fenkit MCP in your AI client in under 30 seconds.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Core Concepts" icon="lightbulb" href="/concepts">
+    Understand runtime modes, tools, and the task lifecycle.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Client Setup" icon="wrench" href="/configuration/client-setup">
+    Configure Cursor, Claude Desktop, Windsurf, and more.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Tool Reference" icon="terminal" href="/tools/auth">
+    Explore every MCP tool with parameters and examples.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+Fenkit MCP runs as a local MCP server alongside your AI client. The agent uses structured tools to read task context, plan work, update status, and document outcomes — keeping your Fenkit dashboard in sync automatically.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Steps>
+  <Step title="Install and configure">
+    Run `npx -y fenkit-mcp setup <client>` to inject the server configuration into your AI client's config file.
+  </Step>
+  <Step title="Authenticate">
+    Call the `login` tool from your agent. A browser window opens, you log in, and the token is saved automatically.
+  </Step>
+  <Step title="Select a project">
+    Use `list_projects` and `select_project` to point the agent at your active Fenkit project.
+  </Step>
+  <Step title="Start working">
+    Your agent calls `list_tasks`, picks up a task, creates a plan with `update_task_plan`, and tracks progress through to `update_task_walkthrough`.
+  </Step>
+</Steps>
 
-## Need inspiration?
+## Key capabilities
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="7 client integrations" icon="plug">
+    One-command setup for Cursor, Claude Desktop, Windsurf, Claude Code, Codex, OpenCode, and Antigravity.
+  </Card>
+  <Card title="Three runtime modes" icon="shield">
+    Separate read, write, and admin servers give your agent only the permissions it needs.
+  </Card>
+  <Card title="Idempotent writes" icon="rotate">
+    All write operations use operation IDs and optional preview/confirmation tokens to prevent duplicate updates.
+  </Card>
+  <Card title="Chat-task binding" icon="link">
+    Deterministically resolve which task a given chat session is working on, even after context resets.
+  </Card>
+</CardGroup>

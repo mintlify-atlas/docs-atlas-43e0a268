@@ -1,0 +1,483 @@
+---
+title: "Task write tools"
+description: "Tools for updating task plans, walkthroughs, status, and priority. Available in write-runtime mode."
+---
+
+These tools are registered by `registerTaskWriteTools()` and are available on the `fenkit_write` server (`write-runtime` mode). All write tools support idempotency and an optional preview/execute confirmation flow.
+
+<Info>
+  Write tools are served by the `fenkit_write` MCP server. Make sure your client config registers the server with `--mode=write-runtime`. See [Client setup](/configuration/client-setup).
+</Info>
+
+## Preview/execute flow
+
+When sensitive confirmation is enabled, write tools operate in two phases. Pass `execution_mode="preview"` first to receive a `confirmation_token`, then pass that token with `execution_mode="execute"` to apply the change.
+
+<Steps>
+  <Step title="Call with execution_mode='preview'">
+    The tool validates the payload, generates a `payload_hash`, and returns a short-lived `confirmation_token`. No changes are written.
+
+    ```json
+    {
+      "taskId": "a3f91",
+      "execution_mode": "preview",
+      "operation_id": "op.plan.20250512.001",
+      "plan": { "summary": "...", "steps": ["..."], "files_affected": ["src/auth/index.ts"] },
+      "model": "claude-sonnet-4-20250514",
+      "agent": "cursor"
+    }
+    ```
+  </Step>
+  <Step title="Inspect the preview response">
+    The response includes the `confirmation_token` and a `result_code: preview_ready`. Review the payload summary before proceeding.
+
+    ```text
+    ## update_task_plan · preview
+    - task_id: a3f91b2e-4c1d-4e8f-b3a2-000000000001
+    - operation_id: op.plan.20250512.001
+    - plan_steps: 5
+    - files_affected: 3
+    - payload_hash: sha256:ab12cd34...
+    - confirmation_token: tok_abc123xyz
+    - confirmation_expires_at: 2025-05-12T14:28:00.000Z
+    - result_code: preview_ready
+    ```
+  </Step>
+  <Step title="Call with execution_mode='execute' and confirmation_token">
+    Pass the token from step 2. The tool verifies the token matches the payload hash, then applies the write with up to three retry attempts and persistence verification.
+
+    ```json
+    {
+      "taskId": "a3f91",
+      "execution_mode": "execute",
+      "confirmation_token": "tok_abc123xyz",
+      "operation_id": "op.plan.20250512.001",
+      "plan": { "summary": "...", "steps": ["..."], "files_affected": ["src/auth/index.ts"] },
+      "model": "claude-sonnet-4-20250514",
+      "agent": "cursor"
+    }
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  When sensitive confirmation is not enabled, you can skip the preview step and call any write tool directly with `execution_mode="execute"` (or omit `execution_mode` entirely).
+</Note>
+
+## Result codes
+
+All write tools return a `result_code` in the response text:
+
+| Code | Meaning |
+|------|---------|
+| `applied` | Write succeeded and was verified against the persisted record. |
+| `duplicate_replayed` | The requested payload is identical to the current state. No write was performed. |
+| `preview_ready` | Preview mode: confirmation token issued, no changes written. |
+| `idempotency_conflict` | A different payload was already submitted with the same `operation_id`. |
+
+---
+
+## update_task_plan
+
+Record or revise the implementation plan for a task. Use before coding begins to document the approach, steps, files, and risks.
+
+<ParamField body="taskId" type="string" required>
+  Task ID. Accepts a full UUID or a short prefix of at least 4 characters.
+</ParamField>
+
+<ParamField body="operation_id" type="string" required>
+  Client-generated idempotency key for this write. Use a stable, unique identifier per logical operation (e.g. `"op.plan.20250512.001"`). Allowed characters: letters, numbers, `.`, `_`, `:`, `-`. Length: 8–128 characters.
+</ParamField>
+
+<ParamField body="plan" type="object" required>
+  The implementation plan.
+
+  <Expandable title="Plan fields">
+    <ParamField body="summary" type="string" required>
+      Brief summary of the implementation plan. Maximum 2000 characters.
+    </ParamField>
+
+    <ParamField body="steps" type="string[]" required>
+      Ordered list of implementation steps. 1–40 items, each up to 240 characters.
+    </ParamField>
+
+    <ParamField body="files_affected" type="string[]" required>
+      Files that will be created or modified. 1–80 items, each path up to 260 characters.
+    </ParamField>
+
+    <ParamField body="risks" type="string[]">
+      Potential risks or blockers. Up to 20 items.
+    </ParamField>
+
+    <ParamField body="assumptions" type="string[]">
+      Assumptions made during planning. Up to 20 items.
+    </ParamField>
+
+    <ParamField body="open_questions" type="string[]">
+      Unresolved questions. Up to 20 items.
+    </ParamField>
+
+    <ParamField body="estimated_complexity" type="string">
+      Estimated task complexity. One of: `low`, `medium`, `high`.
+    </ParamField>
+
+    <ParamField body="notes" type="string">
+      Free-form narrative context (Markdown). Do not duplicate structured fields. Maximum 12000 characters.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="model" type="string" required>
+  Model identifier used to produce this plan (e.g. `"claude-sonnet-4-20250514"`). Maximum 120 characters.
+</ParamField>
+
+<ParamField body="agent" type="string" required>
+  Agent or client name (e.g. `"cursor"`, `"claude-desktop"`). Maximum 80 characters.
+</ParamField>
+
+<ParamField body="mode" type="string">
+  Artifact detail level. One of: `"mini"` (default) or `"full"`. Use `"full"` when the agent already produced a complete plan artifact.
+</ParamField>
+
+<ParamField body="tokens" type="object">
+  Optional token usage for this write operation.
+
+  <Expandable title="Token fields">
+    <ParamField body="input" type="number">Input tokens used.</ParamField>
+    <ParamField body="output" type="number">Output tokens used.</ParamField>
+    <ParamField body="total" type="number">Total tokens used.</ParamField>
+    <ParamField body="estimate" type="number">Estimated token count (fallback).</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="execution_mode" type="string">
+  Confirmation flow mode. One of: `"preview"` or `"execute"`. When sensitive confirmation is enabled, `"preview"` must be called first.
+</ParamField>
+
+<ParamField body="confirmation_token" type="string">
+  Token returned by `execution_mode="preview"`. Required when sensitive confirmation is enabled and `execution_mode="execute"`. Length: 8–200 characters.
+</ParamField>
+
+<ParamField body="chat_id" type="string">
+  Optional chat or thread identifier for binding and heartbeat tracking. Maximum 120 characters.
+</ParamField>
+
+<ParamField body="chat_name" type="string">
+  Optional display name for the chat or thread. Maximum 160 characters.
+</ParamField>
+
+### Response
+
+<ResponseField name="result_code" type="string">
+  One of: `applied`, `duplicate_replayed`, `preview_ready`, `idempotency_conflict`.
+</ResponseField>
+
+### Example payload
+
+```json
+{
+  "taskId": "a3f91",
+  "operation_id": "op.plan.20250512.001",
+  "model": "claude-sonnet-4-20250514",
+  "agent": "cursor",
+  "plan": {
+    "summary": "Extract JWT and session logic from app.ts into a standalone src/auth module with clean interfaces.",
+    "steps": [
+      "Create src/auth/index.ts with module exports",
+      "Extract validateJwt() from app.ts",
+      "Extract SessionManager class from app.ts",
+      "Wire new module into app.ts",
+      "Update unit tests"
+    ],
+    "files_affected": [
+      "src/app.ts",
+      "src/auth/index.ts",
+      "src/auth/session.ts",
+      "tests/auth.test.ts"
+    ],
+    "risks": ["Session state is shared — extraction may introduce subtle timing bugs"],
+    "estimated_complexity": "medium"
+  }
+}
+```
+
+---
+
+## update_task_walkthrough
+
+Record what was implemented after coding is complete. Submitting a walkthrough automatically moves the task to `in_review`.
+
+<Warning>
+  Submitting a walkthrough always sets the task status to `in_review`. This happens atomically as part of the same write. If you want to record a walkthrough without changing status, use a direct status update afterward.
+</Warning>
+
+<ParamField body="taskId" type="string" required>
+  Task ID. Accepts a full UUID or a short prefix of at least 4 characters.
+</ParamField>
+
+<ParamField body="operation_id" type="string" required>
+  Client-generated idempotency key. Allowed characters: letters, numbers, `.`, `_`, `:`, `-`. Length: 8–128 characters.
+</ParamField>
+
+<ParamField body="walkthrough" type="object" required>
+  The post-implementation walkthrough.
+
+  <Expandable title="Walkthrough fields">
+    <ParamField body="summary" type="string" required>
+      Summary of what was accomplished. Maximum 2000 characters.
+    </ParamField>
+
+    <ParamField body="changes" type="string[]" required>
+      List of changes made. 1–80 items, each up to 240 characters.
+    </ParamField>
+
+    <ParamField body="files_modified" type="string[]" required>
+      Files that were modified. 1–120 items, each path up to 260 characters.
+    </ParamField>
+
+    <ParamField body="decisions" type="string[]">
+      Key decisions made during implementation. Up to 30 items.
+    </ParamField>
+
+    <ParamField body="testing" type="string[]">
+      Testing performed or verification steps. Up to 30 items.
+    </ParamField>
+
+    <ParamField body="known_issues" type="string[]">
+      Known issues remaining after this change. Up to 30 items.
+    </ParamField>
+
+    <ParamField body="next_steps" type="string[]">
+      Recommended next steps. Up to 30 items.
+    </ParamField>
+
+    <ParamField body="notes" type="string">
+      Free-form narrative context (Markdown). Do not duplicate structured fields. Maximum 12000 characters.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="model" type="string" required>
+  Model identifier used (e.g. `"claude-sonnet-4-20250514"`). Maximum 120 characters.
+</ParamField>
+
+<ParamField body="agent" type="string" required>
+  Agent or client name. Maximum 80 characters.
+</ParamField>
+
+<ParamField body="mode" type="string">
+  Artifact detail level: `"mini"` (default) or `"full"`.
+</ParamField>
+
+<ParamField body="tokens" type="object">
+  Optional token usage.
+
+  <Expandable title="Token fields">
+    <ParamField body="input" type="number">Input tokens used.</ParamField>
+    <ParamField body="output" type="number">Output tokens used.</ParamField>
+    <ParamField body="total" type="number">Total tokens used.</ParamField>
+    <ParamField body="estimate" type="number">Estimated token count.</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="execution_mode" type="string">
+  `"preview"` or `"execute"`. See [preview/execute flow](#previewexecute-flow).
+</ParamField>
+
+<ParamField body="confirmation_token" type="string">
+  Token from preview step. Required when sensitive confirmation is enabled. Length: 8–200 characters.
+</ParamField>
+
+<ParamField body="chat_id" type="string">
+  Optional chat identifier. Maximum 120 characters.
+</ParamField>
+
+<ParamField body="chat_name" type="string">
+  Optional chat display name. Maximum 160 characters.
+</ParamField>
+
+### Response
+
+<ResponseField name="result_code" type="string">
+  One of: `applied`, `duplicate_replayed`, `preview_ready`, `idempotency_conflict`.
+</ResponseField>
+
+### Example payload
+
+```json
+{
+  "taskId": "a3f91",
+  "operation_id": "op.walkthrough.20250512.001",
+  "model": "claude-sonnet-4-20250514",
+  "agent": "cursor",
+  "walkthrough": {
+    "summary": "Extracted auth logic into src/auth module. All tests pass. Task ready for review.",
+    "changes": [
+      "Created src/auth/index.ts with validateJwt and SessionManager exports",
+      "Removed inline auth code from src/app.ts",
+      "Updated imports in src/routes/user.ts",
+      "Added unit tests for validateJwt edge cases"
+    ],
+    "files_modified": [
+      "src/app.ts",
+      "src/auth/index.ts",
+      "src/auth/session.ts",
+      "src/routes/user.ts",
+      "tests/auth.test.ts"
+    ],
+    "decisions": [
+      "Used constructor injection for SessionManager to keep tests clean"
+    ],
+    "testing": [
+      "All 42 existing tests pass",
+      "Added 6 new tests for validateJwt with expired and malformed tokens"
+    ]
+  }
+}
+```
+
+---
+
+## set_task_status
+
+Move a task to a new lifecycle status. Use when the user explicitly asks to change a task's status.
+
+<Note>
+  `done` is not a valid value for this tool — it is handled by a separate completion flow. Valid statuses are: `todo`, `in_progress`, `in_review`, `backlog`, `frozen`.
+</Note>
+
+<ParamField body="taskId" type="string" required>
+  Task ID. Accepts a full UUID or a short prefix of at least 4 characters.
+</ParamField>
+
+<ParamField body="status" type="string" required>
+  New status. One of: `todo`, `in_progress`, `in_review`, `backlog`, `frozen`.
+</ParamField>
+
+<ParamField body="operation_id" type="string" required>
+  Client-generated idempotency key. Length: 8–128 characters.
+</ParamField>
+
+<ParamField body="model" type="string" required>
+  Model identifier. Maximum 120 characters.
+</ParamField>
+
+<ParamField body="agent" type="string" required>
+  Agent or client name. Maximum 80 characters.
+</ParamField>
+
+<ParamField body="tokens" type="object">
+  Optional token usage.
+
+  <Expandable title="Token fields">
+    <ParamField body="input" type="number">Input tokens used.</ParamField>
+    <ParamField body="output" type="number">Output tokens used.</ParamField>
+    <ParamField body="total" type="number">Total tokens used.</ParamField>
+    <ParamField body="estimate" type="number">Estimated token count.</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="execution_mode" type="string">
+  `"preview"` or `"execute"`. See [preview/execute flow](#previewexecute-flow).
+</ParamField>
+
+<ParamField body="confirmation_token" type="string">
+  Token from preview step. Length: 8–200 characters.
+</ParamField>
+
+<ParamField body="chat_id" type="string">
+  Optional chat identifier. Maximum 120 characters.
+</ParamField>
+
+<ParamField body="chat_name" type="string">
+  Optional chat display name. Maximum 160 characters.
+</ParamField>
+
+### Response
+
+<ResponseField name="result_code" type="string">
+  One of: `applied`, `duplicate_replayed`, `preview_ready`, `idempotency_conflict`.
+</ResponseField>
+
+### Example payload
+
+```json
+{
+  "taskId": "a3f91",
+  "status": "in_progress",
+  "operation_id": "op.status.20250512.001",
+  "model": "claude-sonnet-4-20250514",
+  "agent": "cursor"
+}
+```
+
+---
+
+## set_task_priority
+
+Change the priority of an existing task. Use when the user explicitly asks to raise or lower urgency.
+
+<ParamField body="taskId" type="string" required>
+  Task ID. Accepts a full UUID or a short prefix of at least 4 characters.
+</ParamField>
+
+<ParamField body="priority" type="string" required>
+  New priority. One of: `low`, `medium`, `high`, `urgent`.
+</ParamField>
+
+<ParamField body="operation_id" type="string" required>
+  Client-generated idempotency key. Length: 8–128 characters.
+</ParamField>
+
+<ParamField body="model" type="string" required>
+  Model identifier. Maximum 120 characters.
+</ParamField>
+
+<ParamField body="agent" type="string" required>
+  Agent or client name. Maximum 80 characters.
+</ParamField>
+
+<ParamField body="tokens" type="object">
+  Optional token usage.
+
+  <Expandable title="Token fields">
+    <ParamField body="input" type="number">Input tokens used.</ParamField>
+    <ParamField body="output" type="number">Output tokens used.</ParamField>
+    <ParamField body="total" type="number">Total tokens used.</ParamField>
+    <ParamField body="estimate" type="number">Estimated token count.</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="execution_mode" type="string">
+  `"preview"` or `"execute"`. See [preview/execute flow](#previewexecute-flow).
+</ParamField>
+
+<ParamField body="confirmation_token" type="string">
+  Token from preview step. Length: 8–200 characters.
+</ParamField>
+
+<ParamField body="chat_id" type="string">
+  Optional chat identifier. Maximum 120 characters.
+</ParamField>
+
+<ParamField body="chat_name" type="string">
+  Optional chat display name. Maximum 160 characters.
+</ParamField>
+
+### Response
+
+<ResponseField name="result_code" type="string">
+  One of: `applied`, `duplicate_replayed`, `preview_ready`, `idempotency_conflict`.
+</ResponseField>
+
+### Example payload
+
+```json
+{
+  "taskId": "a3f91",
+  "priority": "urgent",
+  "operation_id": "op.priority.20250512.001",
+  "model": "claude-sonnet-4-20250514",
+  "agent": "cursor"
+}
+```

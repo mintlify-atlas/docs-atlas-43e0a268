@@ -1,0 +1,225 @@
+---
+title: "Task Planning"
+description: "How to submit structured implementation plans with update_task_plan, including the full plan schema, preview/execute flow, and idempotency."
+---
+
+Before writing any code, Fenkit agents submit a structured plan to the active task. This keeps the task record synchronized with intent, creates an auditable history, and gates execution behind an optional human-confirmation step.
+
+The tool is `update_task_plan`.
+
+---
+
+## Plan schema
+
+A plan object has required fields and several optional fields for capturing risk, assumptions, and open questions.
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `summary` | string | Yes | 1–2000 chars |
+| `steps` | string[] | Yes | 1–40 items, each ≤240 chars |
+| `files_affected` | string[] | Yes | 1–80 items, each ≤260 chars |
+| `risks` | string[] | No | ≤20 items |
+| `assumptions` | string[] | No | ≤20 items |
+| `open_questions` | string[] | No | ≤20 items |
+| `estimated_complexity` | `"low"` \| `"medium"` \| `"high"` | No | — |
+| `notes` | string | No | ≤12000 chars, free-form markdown |
+
+<Note>
+`notes` is for free-form narrative context only. Do not duplicate information already present in `steps`, `risks`, or other structured fields.
+</Note>
+
+### Complete example
+
+<CodeGroup>
+
+```json Plan object (input)
+{
+  "summary": "Add OAuth 2.0 support for GitHub and Google identity providers using Passport.js. New users get an account created on first login; existing users by email get linked automatically.",
+  "steps": [
+    "Install passport, passport-github2, passport-google-oauth20 packages",
+    "Add GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to env schema",
+    "Create src/auth/strategies/github.ts with GitHubStrategy configuration",
+    "Create src/auth/strategies/google.ts with GoogleStrategy configuration",
+    "Add /auth/github and /auth/google callback routes in src/routes/auth.ts",
+    "Update User model: add oauthProvider and oauthProviderId fields",
+    "Write findOrCreateOAuthUser helper in src/auth/oauth-user.ts",
+    "Add session middleware and connect-pg-simple store to app.ts",
+    "Write integration tests for both OAuth callback flows",
+    "Update .env.example with placeholder OAuth credentials"
+  ],
+  "files_affected": [
+    "src/auth/strategies/github.ts",
+    "src/auth/strategies/google.ts",
+    "src/routes/auth.ts",
+    "src/auth/oauth-user.ts",
+    "src/models/user.ts",
+    "src/app.ts",
+    "tests/auth/oauth.test.ts",
+    ".env.example",
+    "package.json"
+  ],
+  "risks": [
+    "Email collision: user signs up with password then logs in via OAuth with same email",
+    "Session store migration required if existing sessions use in-memory store"
+  ],
+  "assumptions": [
+    "PostgreSQL is already configured as the primary database",
+    "Existing /auth/login password flow remains unchanged"
+  ],
+  "open_questions": [
+    "Should OAuth-only users be allowed to set a password later? Needs product decision."
+  ],
+  "estimated_complexity": "medium",
+  "notes": "Passport.js was chosen over Auth.js for simpler Express integration. If the project migrates to Next.js later, Auth.js would be the preferred replacement."
+}
+```
+
+```markdown Persisted plan markdown
+## Summary
+Add OAuth 2.0 support for GitHub and Google identity providers using Passport.js. New users get an account created on first login; existing users by email get linked automatically.
+
+## Steps
+- Install passport, passport-github2, passport-google-oauth20 packages
+- Add GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to env schema
+- Create src/auth/strategies/github.ts with GitHubStrategy configuration
+- Create src/auth/strategies/google.ts with GoogleStrategy configuration
+- Add /auth/github and /auth/google callback routes in src/routes/auth.ts
+- Update User model: add oauthProvider and oauthProviderId fields
+- Write findOrCreateOAuthUser helper in src/auth/oauth-user.ts
+- Add session middleware and connect-pg-simple store to app.ts
+- Write integration tests for both OAuth callback flows
+- Update .env.example with placeholder OAuth credentials
+
+## Files Affected
+- `src/auth/strategies/github.ts`
+- `src/auth/strategies/google.ts`
+- `src/routes/auth.ts`
+- `src/auth/oauth-user.ts`
+- `src/models/user.ts`
+- `src/app.ts`
+- `tests/auth/oauth.test.ts`
+- `.env.example`
+- `package.json`
+
+## Risks
+- Email collision: user signs up with password then logs in via OAuth with same email
+- Session store migration required if existing sessions use in-memory store
+
+## Assumptions
+- PostgreSQL is already configured as the primary database
+- Existing /auth/login password flow remains unchanged
+
+## Open Questions
+- Should OAuth-only users be allowed to set a password later? Needs product decision.
+
+## Estimated Complexity
+medium
+
+## Notes
+Passport.js was chosen over Auth.js for simpler Express integration. If the project migrates to Next.js later, Auth.js would be the preferred replacement.
+```
+
+</CodeGroup>
+
+---
+
+## The `mode` field
+
+The `mode` field describes the detail level of the plan being submitted.
+
+| Value | When to use |
+|---|---|
+| `"mini"` | The agent is submitting a short, fallback-level plan (default if omitted) |
+| `"full"` | The agent has already produced a complete, detailed plan in plan mode |
+
+This field is stored in the task's execution metadata history for traceability. It does not change schema validation — the same `PlanSchema` applies in both modes.
+
+---
+
+## Idempotency with `operation_id`
+
+Every call to `update_task_plan` requires a client-generated `operation_id`. This key prevents duplicate writes if a network timeout causes the agent to retry.
+
+- Must be alphanumeric with dots, colons, or dashes: `[a-zA-Z0-9._:-]+`
+- 8–128 characters
+- Example: `plan:task-abc12:2025-03-29T14:00:00Z`
+
+If the server detects an `IDEMPOTENCY_CONFLICT` for an `operation_id` that has already been applied, it returns `result_code: idempotency_conflict`. If the plan content already matches what is stored and the status is unchanged, the server returns `result_code: duplicate_replayed` without a write.
+
+---
+
+## Preview/execute flow
+
+When `FENKIT_REQUIRE_CONFIRMATION=true` is set, write operations require a two-step confirmation. The same pattern applies to `update_task_walkthrough`, `set_task_status`, and `set_task_priority`.
+
+<Steps>
+  <Step title="Call with execution_mode=preview">
+    Submit the plan with `execution_mode="preview"`. The server validates the payload and issues a short-lived `confirmation_token` without persisting anything.
+
+    ```json
+    {
+      "taskId": "abc12",
+      "operation_id": "plan:task-abc12:2025-03-29",
+      "execution_mode": "preview",
+      "plan": { ... },
+      "model": "claude-sonnet-4-20250514",
+      "agent": "cursor"
+    }
+    ```
+
+    The response includes:
+
+    ```
+    ## update_task_plan · preview
+    - task_id: abc12345-...
+    - operation_id: plan:task-abc12:2025-03-29
+    - plan_steps: 10
+    - files_affected: 9
+    - payload_hash: a3f9c2...
+    - confirmation_token: 7d4e1f2a-...
+    - confirmation_expires_at: 2025-03-29T14:02:00.000Z
+    - result_code: preview_ready
+    ```
+  </Step>
+
+  <Step title="Call again with execution_mode=execute">
+    Pass the `confirmation_token` from the preview response along with the same plan payload.
+
+    ```json
+    {
+      "taskId": "abc12",
+      "operation_id": "plan:task-abc12:2025-03-29",
+      "execution_mode": "execute",
+      "confirmation_token": "7d4e1f2a-...",
+      "plan": { ... },
+      "model": "claude-sonnet-4-20250514",
+      "agent": "cursor"
+    }
+    ```
+
+    The server validates that the token matches the tool, `payload_hash`, and scope before writing.
+  </Step>
+</Steps>
+
+<Note>
+Confirmation tokens expire after 2 minutes by default. If the token has expired, call preview again to get a fresh one. Tokens are single-use — they are consumed and deleted on successful execute.
+</Note>
+
+When `FENKIT_REQUIRE_CONFIRMATION` is not set (the default), `execution_mode` can be omitted and the write proceeds directly without a confirmation step.
+
+---
+
+## Markdown format
+
+The plan is stored as markdown in the task record. The sections appear in this order, and optional sections are omitted when not provided:
+
+1. `## Summary`
+2. `## Steps`
+3. `## Files Affected`
+4. `## Risks` *(if provided)*
+5. `## Assumptions` *(if provided)*
+6. `## Open Questions` *(if provided)*
+7. `## Estimated Complexity` *(if provided)*
+8. `## Notes` *(if provided)*
+
+This markdown is returned verbatim by `get_task_section(taskId, "plan")` and included (potentially truncated) in `get_task_context_compact`.

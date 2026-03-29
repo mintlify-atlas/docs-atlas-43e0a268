@@ -1,0 +1,131 @@
+---
+title: "Authentication tools"
+description: "Verify your identity and check session status with the Fenkit MCP authentication tools."
+---
+
+The authentication tools handle login and session inspection. `login` is restricted to **admin mode** only. `get_status` is available in all modes.
+
+---
+
+## `login`
+
+<Info>Available in **admin mode** only.</Info>
+
+Authenticate via browser. Opens a browser window pointing to the Fenkit app, starts a temporary local callback server, waits for the auth token, then saves it automatically.
+
+### Parameters
+
+<ParamField path="appUrl" type="string">
+  Frontend app URL. Defaults to `https://ickit-fe.vercel.app`.
+</ParamField>
+
+<ParamField path="apiUrl" type="string">
+  API base URL. Defaults to `https://ickit-be.vercel.app/api/v1`.
+</ParamField>
+
+### Behavior
+
+<Steps>
+  <Step title="Open the browser">
+    Fenkit opens your default browser to the `/tool-auth` page with a one-time CSRF state token.
+  </Step>
+  <Step title="Wait for callback">
+    A local HTTP server listens on a random port on `127.0.0.1`. The browser app posts the auth token back to this server once you log in.
+  </Step>
+  <Step title="Save token">
+    The token is validated against the API (`GET /projects`), then written to `~/.fnk/config.json`.
+  </Step>
+  <Step title="Auto-select project (if applicable)">
+    If your account has exactly one project, it is selected automatically.
+  </Step>
+</Steps>
+
+<Warning>
+  Authentication times out after **2 minutes**. If the browser does not complete the flow in time, run `login` again.
+</Warning>
+
+### Success response
+
+```text
+✅ Authenticated successfully! Token saved to ~/.fnk/config.json.
+
+✔ Auto-selected project: My Project. You're ready to go!
+```
+
+If you have more than one project, the response omits the auto-selection line and instead prompts:
+
+```text
+✅ Authenticated successfully! Token saved to ~/.fnk/config.json.
+
+Use `list_projects` to see your projects and `select_project` to set an active one.
+```
+
+### Error cases
+
+| Condition | Message |
+|---|---|
+| Authentication timeout | `❌ Authentication failed: Authentication timed out after 2 minutes.` |
+| Browser could not be opened | `❌ Could not open browser. Please visit manually: <url>` |
+| Token validation failed against API | `❌ Authentication failed: token validation against API failed (<reason>).` |
+| Invalid or non-HTTPS URL provided | `❌ appUrl must use HTTPS.` / `❌ apiUrl host is not in the allowlist.` |
+
+---
+
+## `get_status`
+
+<Info>Available in **all modes** (read-runtime, write-runtime, admin).</Info>
+
+Check current authentication status and active project. Call this at the start of a session to confirm your setup before using any other tools.
+
+### Parameters
+
+None.
+
+### Response fields
+
+<ResponseField name="Authenticated" type="string" required>
+  `✅ Yes` if a token is stored, `❌ No — run 'login' first` otherwise.
+</ResponseField>
+
+<ResponseField name="API URL" type="string" required>
+  The API base URL from `~/.fnk/config.json`.
+</ResponseField>
+
+<ResponseField name="Active Project" type="string">
+  Project name (or ID if name is unavailable). Only present when a project is selected. If no project is selected, shows `None — use list_projects and select_project first`.
+</ResponseField>
+
+<ResponseField name="Project ID" type="string">
+  Internal project ID. Only present when a project is selected.
+</ResponseField>
+
+### Example responses
+
+**Authenticated with an active project:**
+
+```text
+**Authenticated**: ✅ Yes
+**API URL**: https://ickit-be.vercel.app/api/v1
+**Active Project**: Acme Backend
+**Project ID**: proj_01hx9z3k4m
+```
+
+**Authenticated but no project selected:**
+
+```text
+**Authenticated**: ✅ Yes
+**API URL**: https://ickit-be.vercel.app/api/v1
+**Active Project**: None — use `list_projects` and `select_project` first
+```
+
+**Not authenticated:**
+
+```text
+**Authenticated**: ❌ No — run 'login' first
+**API URL**: https://ickit-be.vercel.app/api/v1
+**Active Project**: None — use `list_projects` and `select_project` first
+```
+
+<Tip>
+  Run `get_status` after a long pause or context reset to confirm you still have the correct token and project context.
+</Tip>

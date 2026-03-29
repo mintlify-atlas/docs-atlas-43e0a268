@@ -1,0 +1,218 @@
+---
+title: "Fenkit Task Protocol"
+description: "Canonical reference for how AI agents should coordinate work using Fenkit MCP tools."
+---
+
+This protocol defines how AI agents should behave when interacting with the Fenkit platform. Agents that follow this protocol keep task state synchronized, produce traceable delivery artifacts, and avoid destructive write conflicts.
+
+## Core Principles
+
+<AccordionGroup>
+  <Accordion title="AI-Native First">
+    Task operations are structured for autonomous agents. The tool signatures, result codes, and confirmation flows are designed so an agent can operate end-to-end without human prompting at each step.
+  </Accordion>
+  <Accordion title="Strict Read/Write Split">
+    Use read-only tools and resources for discovery and context loading. Use write tools **only** for state changes. This prevents accidental mutations during orientation and keeps the audit trail clean.
+
+    | Mode | Tools |
+    | --- | --- |
+    | Read | `list_tasks`, `search_tasks`, `get_task_context_compact`, `get_task_context_full`, `get_task_section` |
+    | Write | `update_task_plan`, `update_task_walkthrough`, `set_task_status`, `set_task_priority` |
+  </Accordion>
+  <Accordion title="Continuous Synchronization">
+    Plans, status, and walkthroughs are updated **during** execution, not only at the end. If the system notifies the agent of context trimming or compaction, it should immediately persist any unsaved progress with `update_task_walkthrough` or `update_task_plan`, then re-orient using `get_task_context_compact`.
+  </Accordion>
+  <Accordion title="Traceable Delivery">
+    Every write operation records execution metadata: `model`, `agent`, `operation_id`, `payload_hash`, and token counts. This metadata history is appended on each write and is queryable via `get_task_section` with `section="mcp_context"`.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Standard Flow
+
+<Steps>
+  <Step title="Orientation">
+    At session start, or after a context reset:
+
+    1. Call `get_status` to verify authentication and active project.
+    2. If no project is active, call `list_projects` then `select_project`.
+    3. If `chat_id` is available, call `resolve_chat_task(chat_id)` before loading any task context.
+
+    The `resolve_chat_task` response has three possible states:
+
+    | State | Meaning | Next action |
+    | --- | --- | --- |
+    | `bound` | A task is already associated with this chat | Continue with the returned task context |
+    | `unbound` | No task is associated yet | Proceed with explicit task selection |
+    | `needs_confirmation` | Ambiguous binding | Ask the user which task to bind — do **not** silently auto-bind |
+
+    <Warning>
+      If `chat_id` is missing, never infer task binding from the chat title or name. Require explicit task selection first.
+    </Warning>
+  </Step>
+  <Step title="Task Discovery">
+    Use read-only tools to find work:
+
+    - `list_tasks` — filtered by status (default: `todo,in_progress,in_review`)
+    - `search_tasks` — free-text search across titles and descriptions
+
+    Retrieve context with `get_task_context_compact(taskId)` first. Only expand to `get_task_context_full(taskId)` or `get_task_section(...)` when more detail is required.
+
+    <Tip>
+      Compact retrieval is preferred — it uses fewer tokens and is sufficient for most planning decisions.
+    </Tip>
+  </Step>
+  <Step title="Planning">
+    Before writing any code, persist a structured plan:
+
+    ```text
+    update_task_plan(taskId, operation_id, plan, model, agent)
+    ```
+
+    - If you already produced a detailed plan, push it with `mode: "full"`.
+    - If no full plan exists yet, push a short fallback with `mode: "mini"`.
+    - When confirmation is enabled, use `execution_mode="preview"` first to obtain a `confirmation_token`, then re-call with `execution_mode="execute"` and the token.
+
+    After the user approves implementation and after the task was loaded with Fenkit retrieval tools, the plan **must** be persisted before the first execution update.
+  </Step>
+  <Step title="Execution">
+    When work begins, update the task status:
+
+    ```text
+    set_task_status(taskId, "in_progress", operation_id, model, agent)
+    set_task_priority(taskId, priority, operation_id, model, agent)
+    ```
+
+    For all sensitive write operations (`select_project`, `set_task_status`, `set_task_priority`, `update_task_plan`, `update_task_walkthrough`), prefer the preview → execute confirmation flow.
+
+    Read/write operations that include a `chat_id` automatically refresh the chat-task heartbeat binding.
+  </Step>
+  <Step title="Completion">
+    After verifying the implementation:
+
+    1. Submit a walkthrough artifact:
+
+    ```text
+    update_task_walkthrough(taskId, operation_id, walkthrough, model, agent)
+    ```
+
+    2. The task is **automatically moved to `in_review`** after the walkthrough is persisted.
+    3. Before ending the session, ensure the task status reflects actual progress — do not wait for the user to ask.
+
+    <Note>
+      Full artifacts have priority over mini artifacts. Use `mode: "full"` when you have a complete walkthrough; `mode: "mini"` is a fallback only.
+    </Note>
+  </Step>
+</Steps>
+
+---
+
+## Tooling Notes
+
+- `model` and `agent` fields are **required** in all write operations for execution tracking.
+- Compact retrieval (`get_task_context_compact`) is preferred to reduce token usage.
+- Metadata history is appended on each write operation — it is not overwritten.
+- Task read/write operations refresh the chat-task heartbeat when `chat_id` is present.
+- If `chat_id` is missing, never infer binding from `chat_name`; require explicit selection first.
+- Do not wait for the user to ask you to record progress. Record plans and walkthroughs as part of your natural workflow.
+
+---
+
+## Injected Protocol Text
+
+During `setup` / `setup_client`, the following protocol block is written into each supported client's rules file. This is the authoritative text that gets injected — it is also exposed via the `task-protocol` MCP prompt.
+
+```markdown
+## Fenkit Task Protocol
+You are an AI agent with access to the Fenkit platform. Follow this protocol for seamless task coordination:
+
+### 1. Orientation & Session Start
+- **Always** call `get_status` at the beginning of a session to verify authentication and active project.
+- If no project is active, call `list_projects` and ask the user to select one, or try to auto-select if you're in a known repository.
+- If `chat_id` is available, call `resolve_chat_task(chat_id)` before loading task context:
+  - `bound` → continue with returned task context.
+  - `unbound` → continue with explicit task selection.
+  - `needs_confirmation` → ask user to confirm next task; do not silently auto-bind.
+- If `chat_id` is missing, do not infer task binding from chat title/name.
+- After a long pause or context reset, call `get_status` to ensure you still have the correct task context.
+
+### 2. Task Lifecycle
+- **Discovery (read-only)**: Use `list_tasks`, `search_tasks`, `get_task_context_compact`, and `get_task_section` for context.
+- **Loading**: Start with `get_task_context_compact(taskId)`. Use `get_task_context_full(taskId)` or `get_task_section(...)` only when needed.
+- **Planning (write)**: Before coding, persist a plan using `update_task_plan(taskId, operation_id, plan, mode, model, agent)`.
+  - After the user approves implementation and after the task was loaded with Fenkit retrieval tools, you MUST persist plan before the first execution update.
+  - If you already produced a detailed plan (e.g. plan mode), push it with `mode: "full"`.
+  - If no full plan exists, push a short fallback plan with `mode: "mini"`.
+- **Confirmation for sensitive writes**: Use preview → execute flow for `select_project`, `set_task_status`, `set_task_priority`, `update_task_plan`, and `update_task_walkthrough`.
+- **Execution**: Set status to `in_progress` using `set_task_status(taskId, status, operation_id, model, agent)` after confirmation.
+- **Completion**: When work is finished, persist a walkthrough with `update_task_walkthrough(taskId, operation_id, walkthrough, mode, model, agent)`.
+  - This automatically moves the task to `in_review`.
+  - If you already produced a detailed walkthrough, push it with `mode: "full"`.
+  - If no full walkthrough exists, push a short fallback walkthrough with `mode: "mini"`.
+
+### 3. Compaction & Context Trimming
+- If the system notifies you of context trimming or compaction:
+  - Immediately call `update_task_walkthrough` or `update_task_plan` to persist any unsaved progress.
+  - After trimming, re-orient using `get_task_context_compact(taskId)`.
+
+### 4. Automated Updates (Session End)
+- Do not wait for the user to ask you to record progress.
+- Record plans and walkthroughs as part of your natural workflow to keep the Fenkit platform updated.
+- Full artifacts have priority over mini artifacts. Mini artifacts are only fallback when full artifacts were not provided.
+- Before ending the session, ensure the current task status reflects the actual progress.
+```
+
+---
+
+## Setup Injection Targets
+
+When `setup_client` runs, protocol guidance and MCP server entries are written to the appropriate config files for each client:
+
+| Client | Config file | Rules / instructions file |
+| --- | --- | --- |
+| Cursor | `.cursor/mcp.json` | `.cursor/rules/fenkit.mdc` |
+| Windsurf | `~/.windsurf/mcp.json` | `~/.windsurfrules` |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | — |
+| Claude Code | `~/.claude/config.json` | `.clauderules` |
+| Codex | `~/.codex/config.toml` | `~/.codex/fenkit-instructions.md` |
+| OpenCode | `~/.config/opencode/opencode.json` | — |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/GEMINI.md` |
+
+---
+
+## Runtime Profiles
+
+Each Fenkit MCP server instance runs in exactly one mode. Three separate server entries are registered per client during setup:
+
+<CardGroup cols={3}>
+  <Card title="read-runtime" icon="eye">
+    Read-only discovery and context tools, resources, and prompts. Safe to expose broadly. Registered as `fenkit_read`.
+  </Card>
+  <Card title="write-runtime" icon="pen">
+    Mutating task tools (`update_task_plan`, `update_task_walkthrough`, `set_task_status`, `set_task_priority`). Registered as `fenkit_write`.
+  </Card>
+  <Card title="admin" icon="gear">
+    Authentication and setup tools (`login`, `setup_client`, `get_setup_instructions`). Registered as `fenkit_admin`.
+  </Card>
+</CardGroup>
+
+```bash
+# Start a specific runtime mode manually
+node dist/index.js --mode=read-runtime
+node dist/index.js --mode=write-runtime
+node dist/index.js --mode=admin
+```
+
+---
+
+## Result Codes
+
+Write tools return a `result_code` field in their response text to indicate the outcome of the operation:
+
+| Code | Meaning |
+| --- | --- |
+| `applied` | The write was accepted and persisted successfully. |
+| `duplicate_replayed` | The payload matched what was already persisted — no change was made. Safe to ignore. |
+| `preview_ready` | The operation is in preview mode. A `confirmation_token` has been issued; re-call with `execution_mode="execute"` to apply. |
+| `idempotency_conflict` | A write with the same `operation_id` was previously applied with a **different** payload. The current write was rejected to prevent inconsistency. |

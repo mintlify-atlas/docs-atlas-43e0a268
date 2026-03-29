@@ -1,0 +1,202 @@
+---
+title: "Troubleshooting"
+description: "Common errors from Fenkit MCP tools and how to resolve them."
+---
+
+This page documents errors you may encounter when using Fenkit MCP, organized by category. Each section shows the exact error message returned by the server and the recommended fix.
+
+---
+
+## Authentication Errors
+
+<AccordionGroup>
+  <Accordion title='"Authentication timed out after 2 minutes."'>
+    The local callback server started successfully and a browser window opened, but the authentication was not completed within the 2-minute window.
+
+    **Fix:**
+    1. Call `login` again to restart the authentication flow.
+    2. Ensure your browser is accessible from the machine running the MCP server.
+    3. Complete the sign-in on the Fenkit web app before the timer expires.
+
+    <Warning>
+      If your environment does not have a browser (e.g. a remote server or container), see the next error for the manual URL approach.
+    </Warning>
+  </Accordion>
+
+  <Accordion title='"Could not find an available port for the auth callback server."'>
+    The `login` tool was unable to bind a local port for the OAuth callback server.
+
+    **Fix:**
+    - Check that no firewall or policy is blocking ephemeral port allocation on `127.0.0.1`.
+    - Verify that the system allows Node.js to open local TCP listeners.
+    - Restart the MCP server process and try again.
+  </Accordion>
+
+  <Accordion title='"Could not open browser. Please visit manually: <url>"'>
+    The `open` command failed to launch a browser. This is common in headless or SSH environments.
+
+    **Fix:**
+    - Copy the URL printed in the error message and open it in a browser on any accessible device.
+    - Complete the sign-in, then return to the agent session. The callback server is still listening on the local port.
+
+    <Tip>
+      In headless CI or container environments, consider using `get_status` to verify an existing token before running `login`.
+    </Tip>
+  </Accordion>
+
+  <Accordion title='"Authentication failed: token validation against API failed"'>
+    The browser flow completed and a token was received, but the token was rejected when the server tried to fetch the project list from the API.
+
+    **Fix:**
+    1. Check that the `apiUrl` parameter (or `FENKIT_API_URL` environment variable) points to the correct API endpoint.
+    2. Verify network connectivity between the MCP server and the Fenkit API.
+    3. If you passed a custom `apiUrl` to `login`, confirm the URL is reachable and returns valid responses.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Project Selection Errors
+
+<AccordionGroup>
+  <Accordion title='"NO_ACTIVE_PROJECT: No project selected."'>
+    A tool that requires an active project was called before one was selected.
+
+    **Fix:**
+    1. Call `list_projects` to see available projects.
+    2. Call `select_project` with the desired project ID.
+    3. Alternatively, call `get_status` to check whether a project is already active.
+
+    This error is returned by: `list_tasks`, `search_tasks`, `get_task_context_compact`, `get_task_context_full`, `get_task_section`, `get_active_tasks`, `get_tasks_in_review`, `update_task_plan`, `update_task_walkthrough`, `set_task_status`, `set_task_priority`.
+
+    <Tip>
+      The protocol requires calling `get_status` at the start of every session. This catches missing project selection before any task tool is invoked.
+    </Tip>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Task Read Errors
+
+<AccordionGroup>
+  <Accordion title='"CHAT_ID_REQUIRED: resolve_chat_task requires a non-empty chat_id."'>
+    `resolve_chat_task` was called with an empty or missing `chat_id`.
+
+    **Fix:**
+    - Provide a non-empty string for `chat_id`.
+    - If the chat ID is not available in the current context, skip `resolve_chat_task` and use explicit task selection via `list_tasks` + `get_task_context_compact` instead.
+
+    ```text
+    resolve_chat_task(chat_id="thread_abc123")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Task Write Errors
+
+<AccordionGroup>
+  <Accordion title='"CONFIRMATION_REQUIRED: call mode=&quot;preview&quot; first, then execute with confirmation_token."'>
+    A sensitive write tool was called with `execution_mode="execute"` but no `confirmation_token` was provided, and confirmation enforcement is active.
+
+    **Fix:**
+    1. Call the same tool with `execution_mode="preview"` to receive a `confirmation_token`.
+    2. Re-call the tool with `execution_mode="execute"` and pass the returned `confirmation_token`.
+
+    ```text
+    # Step 1 — preview
+    update_task_plan(..., execution_mode="preview")
+    # → returns confirmation_token: "tok_xxxx", result_code: preview_ready
+
+    # Step 2 — execute
+    update_task_plan(..., execution_mode="execute", confirmation_token="tok_xxxx")
+    # → result_code: applied
+    ```
+
+    Affected tools: `update_task_plan`, `update_task_walkthrough`, `set_task_status`, `set_task_priority`, `select_project`.
+  </Accordion>
+
+  <Accordion title='"INVALID_INPUT: Plan validation failed" / "INVALID_INPUT: Walkthrough validation failed"'>
+    The `plan` or `walkthrough` object failed schema validation.
+
+    **Fix:**
+    - Check that all required fields are present.
+    - For `plan`: `summary` (string), `steps` (array of strings), `files_affected` (array of strings) are required.
+    - For `walkthrough`: `summary` (string), `changes` (array of strings), `files_modified` (array of strings) are required.
+    - The error message lists the specific fields and validation messages that failed.
+
+    ```json
+    // Minimal valid plan
+    {
+      "summary": "Refactor auth module",
+      "steps": ["Update token validation", "Add error handling"],
+      "files_affected": ["src/auth.ts"]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title='"idempotency_conflict" result code'>
+    A write was attempted with an `operation_id` that was previously used with a **different payload**. The server rejected the write to prevent inconsistency.
+
+    **Fix:**
+    - Generate a new unique `operation_id` (e.g. a UUID) for this write attempt.
+    - Do not reuse `operation_id` values across different payloads for the same task.
+
+    <Warning>
+      `operation_id` is an idempotency key. The same `operation_id` with the same payload is safe to replay (it returns `duplicate_replayed`). The same `operation_id` with a **different** payload is rejected with `idempotency_conflict`.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Server Startup Errors
+
+<AccordionGroup>
+  <Accordion title='"Fatal error starting MCP server"'>
+    The MCP server process crashed on startup.
+
+    **Common causes and fixes:**
+
+    - **Node.js version too old** — Fenkit MCP requires Node.js v18 or later. Run `node --version` to check.
+    - **Missing dependencies** — Run `npm install` in the fenkit-mcp directory to restore `node_modules`.
+    - **Corrupt build** — Run `npm run build` to regenerate `dist/`.
+    - **Permission error** — Ensure the user running the MCP server has read access to the install directory.
+
+    ```bash
+    node --version   # must be v18+
+    npm install
+    npm run build
+    ```
+  </Accordion>
+
+  <Accordion title="Tools not appearing in the AI client">
+    The MCP server is running but the client does not list Fenkit tools.
+
+    **Fix:**
+    1. Restart the AI client — most clients only read MCP config on startup.
+    2. Verify the config files were written correctly by running `setup_client` or inspecting the config file directly.
+    3. Check the client logs for MCP connection errors.
+    4. Confirm the server path in the config points to an existing `dist/index.js` file.
+
+    <Tip>
+      Use `get_setup_instructions` (from the `admin` server) to print the expected config block for your client without modifying any files. Compare it against what is currently on disk.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Wrong tools appearing (e.g. only read tools, or missing write tools)">
+    Each runtime mode exposes a different tool set. If the wrong tools are present, the wrong server mode is configured for that entry.
+
+    | Expected tools | Required mode |
+    | --- | --- |
+    | `list_tasks`, `search_tasks`, `get_task_context_*` | `--mode=read-runtime` |
+    | `update_task_plan`, `update_task_walkthrough`, `set_task_status`, `set_task_priority` | `--mode=write-runtime` |
+    | `login`, `setup_client`, `get_setup_instructions` | `--mode=admin` |
+
+    **Fix:**
+    - Check the `args` array in your client's MCP config to confirm each server entry uses the correct `--mode=` flag.
+    - Re-run `setup_client` to restore the correct three-entry configuration (`fenkit_read`, `fenkit_write`, `fenkit_admin`).
+  </Accordion>
+</AccordionGroup>

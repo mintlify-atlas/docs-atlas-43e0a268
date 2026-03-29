@@ -1,0 +1,349 @@
+---
+title: "Setup tools"
+description: "Automatically configure supported AI clients to use the Fenkit MCP server, or retrieve config snippets to copy-paste manually."
+---
+
+The setup tools write MCP configuration files so you never have to do it by hand. All setup tools are available in **admin mode** only. The `task-protocol` prompt is also documented here.
+
+---
+
+## `setup_client`
+
+<Info>Available in **admin mode** only.</Info>
+
+Configure a supported AI client to use the Fenkit MCP server. Writes config files automatically and injects the Fenkit Task Protocol into any applicable rules file.
+
+### Parameters
+
+<ParamField path="client" type="string" required>
+  The AI client to configure. One of: `claude`, `cursor`, `windsurf`, `codex`, `opencode`, `antigravity`, `claudecode`.
+</ParamField>
+
+<ParamField path="path" type="string">
+  Absolute path to a project directory for project-local configuration. Used by **Cursor** to write `.cursor/mcp.json` and `.cursor/rules/fenkit.mdc` into a specific repo. Defaults to the current working directory.
+
+  <Warning>
+    The path must be within the current working directory. Set `FENKIT_ALLOW_ANY_SETUP_PATH=true` to override this restriction in trusted environments.
+  </Warning>
+</ParamField>
+
+### Files written per client
+
+| Client | Config file | Rules / instructions file |
+|---|---|---|
+| `claude` | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | — |
+| `cursor` | `<project>/.cursor/mcp.json` | `<project>/.cursor/rules/fenkit.mdc` |
+| `windsurf` | `~/.windsurf/mcp.json` | `~/.windsurfrules` |
+| `claudecode` | `~/.claude/config.json` | `.clauderules` (project root) |
+| `codex` | `~/.codex/config.toml` | `~/.codex/fenkit-instructions.md` |
+| `opencode` | `~/.config/opencode/opencode.json` | — |
+| `antigravity` | `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/GEMINI.md` |
+
+<Note>
+  Three MCP server entries are registered for each client: `fenkit_read` (`--mode=read-runtime`), `fenkit_write` (`--mode=write-runtime`), and `fenkit_admin` (`--mode=admin`). See [Runtime modes](/configuration/runtime-modes) for details.
+</Note>
+
+### Response fields
+
+<ResponseField name="Action" type="string">
+  Human-readable description of what was written.
+</ResponseField>
+
+<ResponseField name="Config path" type="string">
+  Absolute path to the primary config file that was written.
+</ResponseField>
+
+<ResponseField name="Read runtime" type="string">
+  The full `node` command used for the `fenkit_read` server entry.
+</ResponseField>
+
+<ResponseField name="Write runtime" type="string">
+  The full `node` command used for the `fenkit_write` server entry.
+</ResponseField>
+
+<ResponseField name="Admin server" type="string">
+  The full `node` command used for the `fenkit_admin` server entry.
+</ResponseField>
+
+<ResponseField name="Next steps" type="string">
+  Instructions to restart the client and verify authentication.
+</ResponseField>
+
+### Example response
+
+```text
+✅ Fenkit MCP configured for cursor
+
+**Action**: Updated .cursor/mcp.json and .cursor/rules/fenkit.mdc in /home/user/my-project
+**Config path**: `/home/user/my-project/.cursor/mcp.json`
+**Read runtime**: `node /home/user/.fnk/fenkit-mcp/dist/index.js --mode=read-runtime`
+**Write runtime**: `node /home/user/.fnk/fenkit-mcp/dist/index.js --mode=write-runtime`
+**Admin server**: `node /home/user/.fnk/fenkit-mcp/dist/index.js --mode=admin`
+
+**Next steps**:
+1. Restart Cursor to load the new config.
+2. Run `get_status` to verify authentication.
+3. Use `login` to authenticate if not yet authenticated.
+```
+
+---
+
+## `get_setup_instructions`
+
+<Info>Available in **admin mode** only.</Info>
+
+Get manual setup instructions for any supported AI client. Returns the exact config blocks to copy-paste without modifying any files. Use this to review the configuration before applying it with `setup_client`.
+
+### Parameters
+
+<ParamField path="client" type="string" required>
+  The AI client to get instructions for. One of: `claude`, `cursor`, `windsurf`, `codex`, `opencode`, `antigravity`, `claudecode`.
+</ParamField>
+
+### Example output by client
+
+<Tabs>
+  <Tab title="Claude Desktop">
+    Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "fenkit_read": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Cursor">
+    Add to `.cursor/mcp.json` in your project:
+
+    ```json
+    {
+      "mcpServers": {
+        "fenkit_read": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+
+    Also create `.cursor/rules/fenkit.mdc`:
+
+    ```text
+    ---
+    alwaysApply: true
+    ---
+
+    ## Fenkit Task Protocol
+    [protocol content injected automatically by setup_client]
+    ```
+  </Tab>
+  <Tab title="Windsurf">
+    Edit `~/.windsurf/mcp.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "fenkit_read": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+
+    Also append the Fenkit Task Protocol to `~/.windsurfrules`.
+  </Tab>
+  <Tab title="Codex">
+    Edit `~/.codex/config.toml`:
+
+    ```toml
+    model_instructions_file = "/home/user/.codex/fenkit-instructions.md"
+
+    [mcp_servers.fenkit_read]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+
+    [mcp_servers.fenkit_write]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+
+    [mcp_servers.fenkit_admin]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+    ```
+
+    Also create `~/.codex/fenkit-instructions.md` with the Fenkit Task Protocol content.
+  </Tab>
+  <Tab title="OpenCode">
+    Edit `~/.config/opencode/opencode.json`:
+
+    ```json
+    {
+      "$schema": "https://opencode.ai/config.json",
+      "mcp": {
+        "fenkit_read": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Antigravity">
+    Edit `~/.gemini/antigravity/mcp_config.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "fenkit_read": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+
+    Also append the Fenkit Task Protocol to `~/.gemini/GEMINI.md`.
+  </Tab>
+  <Tab title="Claude Code">
+    Edit `~/.claude/config.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "fenkit_read": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+
+    Also append the Fenkit Task Protocol to `.clauderules` in your project root.
+  </Tab>
+</Tabs>
+
+<Tip>
+  Use `get_setup_instructions` to preview the exact config that `setup_client` would write, before committing to any file changes.
+</Tip>
+
+---
+
+## `task-protocol` prompt
+
+<Info>Available in **admin mode** only.</Info>
+
+A native MCP prompt that returns the full Fenkit Task Protocol instructions for AI agents. Use it to load protocol context into your agent without relying on a rules file.
+
+### Parameters
+
+None.
+
+### What it returns
+
+The prompt returns the complete **Fenkit Task Protocol** as a user message. This is the same content written to rules files (`.windsurfrules`, `.cursor/rules/fenkit.mdc`, etc.) by `setup_client`. It covers:
+
+- **Orientation & session start** — how to call `get_status`, resolve chat-task bindings, and re-orient after context resets.
+- **Task lifecycle** — discovery, loading, planning, confirmation, execution, and completion steps.
+- **Compaction & context trimming** — how to persist progress when the context window is trimmed.
+- **Automated updates** — when and how to record plans and walkthroughs without waiting for user prompts.
+
+<Accordion title="View full Fenkit Task Protocol">
+
+```markdown
+## Fenkit Task Protocol
+You are an AI agent with access to the Fenkit platform. Follow this protocol for seamless task coordination:
+
+### 1. Orientation & Session Start
+- **Always** call `get_status` at the beginning of a session to verify authentication and active project.
+- If no project is active, call `list_projects` and ask the user to select one, or try to auto-select if you're in a known repository.
+- If `chat_id` is available, call `resolve_chat_task(chat_id)` before loading task context:
+  - `bound` → continue with returned task context.
+  - `unbound` → continue with explicit task selection.
+  - `needs_confirmation` → ask user to confirm next task; do not silently auto-bind.
+- If `chat_id` is missing, do not infer task binding from chat title/name.
+- After a long pause or context reset, call `get_status` to ensure you still have the correct task context.
+
+### 2. Task Lifecycle
+- **Discovery (read-only)**: Use `list_tasks`, `search_tasks`, `get_task_context_compact`, and `get_task_section` for context.
+- **Loading**: Start with `get_task_context_compact(taskId)`. Use `get_task_context_full(taskId)` or `get_task_section(...)` only when needed.
+- **Planning (write)**: Before coding, persist a plan using `update_task_plan(taskId, operation_id, plan, mode, model, agent)`.
+  - After the user approves implementation and after the task was loaded with Fenkit retrieval tools, you MUST persist plan before the first execution update.
+  - If you already produced a detailed plan (e.g. plan mode), push it with `mode: "full"`.
+  - If no full plan exists, push a short fallback plan with `mode: "mini"`.
+- **Confirmation for sensitive writes**: Use preview → execute flow for `select_project`, `set_task_status`, `set_task_priority`, `update_task_plan`, and `update_task_walkthrough`.
+- **Execution**: Set status to `in_progress` using `set_task_status(taskId, status, operation_id, model, agent)` after confirmation.
+- **Completion**: When work is finished, persist a walkthrough with `update_task_walkthrough(taskId, operation_id, walkthrough, mode, model, agent)`.
+  - This automatically moves the task to `in_review`.
+  - If you already produced a detailed walkthrough, push it with `mode: "full"`.
+  - If no full walkthrough exists, push a short fallback walkthrough with `mode: "mini"`.
+
+### 3. Compaction & Context Trimming
+- If the system notifies you of context trimming or compaction:
+  - Immediately call `update_task_walkthrough` or `update_task_plan` to persist any unsaved progress.
+  - After trimming, re-orient using `get_task_context_compact(taskId)`.
+
+### 4. Automated Updates (Session End)
+- Do not wait for the user to ask you to record progress.
+- Record plans and walkthroughs as part of your natural workflow to keep the Fenkit platform updated.
+- Full artifacts have priority over mini artifacts. Mini artifacts are only fallback when full artifacts were not provided.
+- Before ending the session, ensure the current task status reflects the actual progress.
+```
+
+</Accordion>

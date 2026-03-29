@@ -1,80 +1,186 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick Start"
+description: "Connect Fenkit MCP to your AI client and start working on tasks in under 5 minutes."
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+- Node.js v18 or later
+- A Fenkit account
+- One of the 7 supported AI clients installed
 
-### Step 1: Set up your local environment
+## Setup
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Steps>
+  <Step title="Run the one-line setup command">
+    Pick your AI client and run the corresponding setup command. This writes all required MCP config files automatically — no manual JSON editing needed.
 
-### Step 2: Deploy your changes
+    <Tabs>
+      <Tab title="Cursor">
+        ```bash
+        npx -y fenkit-mcp setup cursor
+        ```
+        Writes `.cursor/mcp.json` and `.cursor/rules/fenkit.mdc` in your current project directory.
+      </Tab>
+      <Tab title="Claude Desktop">
+        ```bash
+        npx -y fenkit-mcp setup claude
+        ```
+        Writes to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
+      </Tab>
+      <Tab title="Windsurf">
+        ```bash
+        npx -y fenkit-mcp setup windsurf
+        ```
+        Writes `~/.windsurf/mcp.json` and injects the Fenkit protocol into `~/.windsurfrules`.
+      </Tab>
+      <Tab title="Claude Code">
+        ```bash
+        npx -y fenkit-mcp setup claudecode
+        ```
+        Writes `~/.claude/config.json` and injects the Fenkit protocol into `.clauderules` in your current project directory.
+      </Tab>
+      <Tab title="Codex">
+        ```bash
+        npx -y fenkit-mcp setup codex
+        ```
+        Writes `~/.codex/config.toml` and `~/.codex/fenkit-instructions.md`.
+      </Tab>
+      <Tab title="OpenCode">
+        ```bash
+        npx -y fenkit-mcp setup opencode
+        ```
+        Writes `~/.config/opencode/opencode.json` (macOS/Linux) or `%APPDATA%\opencode\opencode.json` (Windows).
+      </Tab>
+      <Tab title="Antigravity">
+        ```bash
+        npx -y fenkit-mcp setup antigravity
+        ```
+        Writes `~/.gemini/antigravity/mcp_config.json` and injects the Fenkit protocol into `~/.gemini/GEMINI.md`.
+      </Tab>
+    </Tabs>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    The setup registers three MCP servers for your client: `fenkit_read`, `fenkit_write`, and `fenkit_admin`.
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Restart your AI client">
+    Restart the client to load the new MCP configuration. The three Fenkit servers (`fenkit_read`, `fenkit_write`, `fenkit_admin`) will connect on startup.
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Verify the connection">
+    Ask your agent to call `get_status`. It returns your current authentication state and active project.
 
-### Step 3: Go live
+    ```
+    get_status
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    Expected response when not yet authenticated:
 
-## Next steps
+    ```
+    Authenticated: ❌ No — run 'login' first
+    API URL: https://ickit-be.vercel.app/api/v1
+    Active Project: None — use `list_projects` and `select_project` first
+    ```
 
-Now that you have your docs running, explore these key features:
+    <Note>
+      If `get_status` returns an error or the tool is not found, the MCP servers did not connect. Verify that you restarted your client and that Node.js v18+ is on your shell's `PATH`.
+    </Note>
+  </Step>
+
+  <Step title="Log in">
+    Call the `login` tool. Fenkit MCP opens a browser window pointing to the Fenkit authentication page. Complete the login flow there — the token is captured automatically and saved to `~/.fnk/config.json`.
+
+    ```
+    login
+    ```
+
+    After successful authentication:
+
+    ```
+    ✅ Authenticated successfully! Token saved to ~/.fnk/config.json.
+    ```
+
+    If you have exactly one project, it is auto-selected. Otherwise, proceed to the next step.
+  </Step>
+
+  <Step title="Select a project">
+    List your available projects, then select one to set the active context for all subsequent task operations.
+
+    ```
+    list_projects
+    ```
+
+    Example response:
+
+    ```
+    ## Projects
+
+    - **My App** (`a1b2c3d4`) — Main product
+    - **Internal Tools** (`e5f6a7b8`) — Team utilities
+    ```
+
+    Select a project by its ID (a short prefix is accepted):
+
+    ```
+    select_project a1b2c3
+    ```
+
+    ```
+    ✔ Active project set to **My App** (`a1b2c3d4`)
+
+    result_code: applied
+    ```
+  </Step>
+
+  <Step title="List and load tasks">
+    List tasks in the active project. By default this returns tasks with status `todo`, `in_progress`, or `in_review`.
+
+    ```
+    list_tasks
+    ```
+
+    Example response:
+
+    ```
+    ## Tasks in My App
+
+    ### 🔵 IN PROGRESS
+    - **Add OAuth support** (`22b50`) · high
+
+    ### ⬜ TODO
+    - **Refactor user model** (`9fc12`) · medium — Extract address fields into...
+    - **Write API tests** (`3a8d1`) · low
+    ```
+
+    Load the full context for a specific task before starting work:
+
+    ```
+    get_task_context_compact 22b50
+    ```
+
+    This returns the task title, description, status, priority, current plan, and any previous walkthrough — all in a token-efficient format.
+  </Step>
+</Steps>
+
+## What happens next
+
+Once your agent has task context, it follows the Fenkit Task Protocol automatically:
+
+1. Submits a structured plan with `update_task_plan` before writing any code
+2. Sets the task to `in_progress` with `set_task_status`
+3. Persists a walkthrough with `update_task_walkthrough` when done, which automatically moves the task to `in_review`
+
+Your Fenkit project board updates in real time as the agent works.
+
+<Tip>
+  Search for tasks by keyword using `search_tasks` when you know what you want to work on but not the task ID.
+</Tip>
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core concepts" icon="book-open" href="/concepts">
+    Understand runtime modes, task lifecycle states, and the confirmation flow.
+  </Card>
+  <Card title="Introduction" icon="circle-info" href="/introduction">
+    Learn what Fenkit MCP is and why it exists.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

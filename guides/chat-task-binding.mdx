@@ -1,0 +1,173 @@
+---
+title: "Chat-Task Binding"
+description: "How Fenkit deterministically resolves which task a chat session is working on using chat_id, heartbeats, and the resolve_chat_task tool."
+---
+
+Chat-task binding is the mechanism that lets Fenkit MCP know which task a given chat session is actively working on. When a binding exists, the agent can resume work immediately on session start — without asking the user to re-select a task.
+
+---
+
+## What is a `chat_id`?
+
+A `chat_id` is a stable, unique identifier for the current chat or thread session. It is provided by the AI client (e.g. Cursor, Claude Desktop, Codex) and remains constant for the lifetime of the conversation.
+
+Fenkit uses `chat_id` as the key for resolving and maintaining the chat-task binding. It is passed as a parameter to `resolve_chat_task` and optionally to all write tools to keep the binding's heartbeat current.
+
+Common client headers that map to `chat_id`:
+
+- `x-chat-id`
+- `x-thread-id`
+- `x-codex-chat-id`
+- `x-codex-thread-id`
+
+<Note>
+Never infer task binding from a chat title or `chat_name`. Chat names are display labels that may change or be non-unique. Always use `chat_id` for binding resolution. If `chat_id` is unavailable, require explicit task selection from the user.
+</Note>
+
+---
+
+## `resolve_chat_task`
+
+Call this tool at the start of every session when a `chat_id` is available.
+
+**Input:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `chat_id` | string | Yes | Stable chat/thread identifier |
+| `maxChars` | number | No | Max chars for compact context fields when state is `bound` (default: 3500) |
+
+**Possible states returned:**
+
+<AccordionGroup>
+  <Accordion title="bound — a binding exists">
+    A binding was found for this `chat_id`. The response includes `project_id`, `task_id`, and the compact task context inline.
+
+    ```
+    ## Chat Task Resolution
+
+    - state: bound
+    - chat_id: chat_abc123
+    - project_id: proj_xyz
+    - task_id: task_def456
+
+    [compact task context follows...]
+    ```
+
+    Continue directly with the returned task. No additional task selection is needed.
+  </Accordion>
+
+  <Accordion title="unbound — no binding exists">
+    No binding has been created for this `chat_id` yet. Proceed with explicit task selection: call `list_tasks` or `search_tasks`, ask the user which task to work on, then load context with `get_task_context_compact`.
+
+    ```
+    ## Chat Task Resolution
+
+    - state: unbound
+    - chat_id: chat_abc123
+    ```
+  </Accordion>
+
+  <Accordion title="needs_confirmation — binding is ambiguous">
+    The binding state is ambiguous (e.g. multiple candidates, stale data). Ask the user which task they want to bind to, then proceed with explicit selection.
+
+    ```
+    ## Chat Task Resolution
+
+    - state: needs_confirmation
+    - reason: Multiple candidate tasks found for this chat_id
+    - project_id: proj_xyz
+    - task_id: task_def456
+    ```
+
+    Do not silently auto-bind. Require explicit confirmation from the user.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Recommended session start flow
+
+<Steps>
+  <Step title="Call get_status">
+    Check which project is currently active and confirm the MCP connection is healthy.
+  </Step>
+
+  <Step title="Select a project if needed">
+    If no project is active, call `list_projects` then `select_project` before proceeding.
+  </Step>
+
+  <Step title="Resolve the chat-task binding">
+    If a `chat_id` is available for the current session, call `resolve_chat_task(chat_id)`.
+
+    - `bound` → use the returned task context and skip to implementation
+    - `unbound` → proceed to explicit task selection (next step)
+    - `needs_confirmation` → ask the user which task to bind, then proceed to explicit task selection
+  </Step>
+
+  <Step title="Explicit task selection (if unbound)">
+    Call `list_tasks` or `search_tasks` to show available tasks. Ask the user to confirm which one to work on. Load context with `get_task_context_compact(taskId)`.
+
+    Once the user has confirmed a task, the binding is created implicitly on the first heartbeat (sent automatically by any read or write tool call that includes `chat_id`).
+  </Step>
+
+  <Step title="Begin work">
+    Follow the standard lifecycle: plan → execute → walkthrough. Pass `chat_id` in write tool calls to keep the binding's heartbeat current.
+  </Step>
+</Steps>
+
+---
+
+## Heartbeats
+
+Every tool call that includes a `chat_id` (or that receives it from the request headers) sends a heartbeat to the Fenkit server:
+
+```
+POST /mcp/chat-task-bindings/heartbeat
+{
+  chat_id,
+  project_id,
+  task_id,
+  last_tool,
+  last_seen_at,
+  status
+}
+```
+
+This updates `last_seen_at` on the binding record. The server uses this timestamp to determine whether a binding is current.
+
+Heartbeats are sent automatically by:
+
+- `resolve_chat_task`
+- `get_task_context_compact`
+- `get_task_context_full`
+- `get_task_section`
+- All write tools (`update_task_plan`, `update_task_walkthrough`, `set_task_status`, `set_task_priority`) when `chat_id` is provided
+
+---
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="What if I don't have a chat_id?">
+    If no `chat_id` is available for the current session, skip `resolve_chat_task` and proceed with explicit task selection. Call `list_tasks` or `search_tasks`, confirm with the user, then load context with `get_task_context_compact`.
+
+    Do not fabricate a `chat_id` or attempt to derive one from session metadata. An absent `chat_id` is handled gracefully — the agent simply skips the binding step.
+  </Accordion>
+
+  <Accordion title="When does a binding expire?">
+    Bindings do not expire on a fixed timer. The server uses `last_seen_at` from heartbeats to assess staleness. A binding that has not been heartbeated for an extended period may be returned as `needs_confirmation` rather than `bound` on the next `resolve_chat_task` call.
+  </Accordion>
+
+  <Accordion title="Can one chat_id bind to multiple tasks?">
+    No. A `chat_id` maps to a single active task at a time. If the user switches tasks mid-session, the binding is updated on the next heartbeat with the new `task_id`.
+  </Accordion>
+
+  <Accordion title="Can I use chat_name instead of chat_id?">
+    No. Chat names are display labels that may be non-unique or change during a session. The Fenkit protocol explicitly prohibits inferring task binding from `chat_name`. Always use `chat_id` as the binding key.
+  </Accordion>
+
+  <Accordion title="What clients support chat_id?">
+    Any client that forwards one of the supported headers (`x-chat-id`, `x-thread-id`, `x-codex-chat-id`, `x-codex-thread-id`) to the MCP transport will have `chat_id` available automatically. Fenkit's `setup_client` command injects protocol guidance into supported clients including Cursor, Windsurf, Claude Desktop, Claude Code, Codex, OpenCode, and Antigravity.
+  </Accordion>
+</AccordionGroup>

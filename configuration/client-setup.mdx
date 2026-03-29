@@ -1,0 +1,187 @@
+---
+title: "Client setup"
+description: "Configure any supported AI client to use Fenkit MCP with a single command."
+---
+
+Fenkit MCP works with seven AI clients. The setup command writes all required config files automatically — no manual editing needed.
+
+## One-command setup
+
+Run the appropriate command for your client:
+
+<Tabs>
+  <Tab title="Cursor">
+    ```bash
+    npx -y fenkit-mcp setup cursor
+    ```
+
+    **Files written:**
+    - `.cursor/mcp.json` — registers the three Fenkit MCP servers for the current project
+    - `.cursor/rules/fenkit.mdc` — injects the Fenkit Task Protocol with `alwaysApply: true`
+
+    <Note>Cursor config is project-local. Run the command from your project root, or pass a path with `--path /your/project`.</Note>
+  </Tab>
+  <Tab title="Claude Desktop">
+    ```bash
+    npx -y fenkit-mcp setup claude
+    ```
+
+    **Files written:**
+    - `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+    - `%APPDATA%\Claude\claude_desktop_config.json` (Windows)
+  </Tab>
+  <Tab title="Windsurf">
+    ```bash
+    npx -y fenkit-mcp setup windsurf
+    ```
+
+    **Files written:**
+    - `~/.windsurf/mcp.json` — registers the three Fenkit MCP servers
+    - `~/.windsurfrules` — appends the Fenkit Task Protocol
+  </Tab>
+  <Tab title="Claude Code">
+    ```bash
+    npx -y fenkit-mcp setup claudecode
+    ```
+
+    **Files written:**
+    - `~/.claude/config.json` — registers the three Fenkit MCP servers
+    - `.clauderules` — appends the Fenkit Task Protocol in the current project root
+  </Tab>
+  <Tab title="Codex">
+    ```bash
+    npx -y fenkit-mcp setup codex
+    ```
+
+    **Files written:**
+    - `~/.codex/config.toml` — registers servers and sets `model_instructions_file`
+    - `~/.codex/fenkit-instructions.md` — contains the Fenkit Task Protocol
+  </Tab>
+  <Tab title="OpenCode">
+    ```bash
+    npx -y fenkit-mcp setup opencode
+    ```
+
+    **Files written:**
+    - `~/.config/opencode/opencode.json` — registers the three Fenkit MCP servers under the `mcp` key
+  </Tab>
+  <Tab title="Antigravity">
+    ```bash
+    npx -y fenkit-mcp setup antigravity
+    ```
+
+    **Files written:**
+    - `~/.gemini/antigravity/mcp_config.json` — registers the three Fenkit MCP servers
+    - `~/.gemini/GEMINI.md` — appends the Fenkit Task Protocol
+  </Tab>
+</Tabs>
+
+## What gets registered
+
+Every client setup registers three MCP servers:
+
+| Server | Mode | Purpose |
+|--------|------|---------|
+| `fenkit_read` | `read-runtime` | Task discovery, context retrieval, resources, and prompts |
+| `fenkit_write` | `write-runtime` | Task state mutations (status, plan, walkthrough) |
+| `fenkit_admin` | `admin` | Authentication and client configuration |
+
+Splitting into three servers follows the principle of least privilege — read-only operations cannot accidentally trigger writes, and authentication is isolated from runtime operations. See [Runtime modes](/configuration/runtime-modes) for details.
+
+## Setup flow
+
+<Steps>
+  <Step title="Run the setup command">
+    Run `npx -y fenkit-mcp setup <client>` from your terminal. No global install is required — `npx` downloads and runs the package directly.
+  </Step>
+  <Step title="Restart your client">
+    Restart the AI client (or reload its MCP config) so it picks up the new server entries.
+  </Step>
+  <Step title="Authenticate">
+    In your AI client, call the `login` tool. This opens a browser window for authentication and saves your token automatically. See [Authentication](/configuration/authentication).
+  </Step>
+  <Step title="Verify the connection">
+    Call `get_status` to confirm the servers are connected and your token is valid.
+  </Step>
+</Steps>
+
+## Manual setup
+
+If you prefer to edit config files yourself, use the `get_setup_instructions` tool from your AI client. It returns the exact JSON or TOML blocks to copy-paste for any supported client without modifying any files.
+
+```
+get_setup_instructions({ client: "cursor" })
+```
+
+### Config format by client
+
+<Tabs>
+  <Tab title="JSON clients">
+    Claude Desktop, Windsurf, Cursor, Claude Code, and Antigravity all use the same `mcpServers` JSON structure:
+
+    ```json
+    {
+      "mcpServers": {
+        "fenkit_read": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "command": "node",
+          "args": ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="OpenCode">
+    OpenCode uses a different schema under the `mcp` key:
+
+    ```json
+    {
+      "mcp": {
+        "fenkit_read": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+        },
+        "fenkit_write": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+        },
+        "fenkit_admin": {
+          "type": "local",
+          "enabled": true,
+          "command": ["node", "/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Codex (TOML)">
+    Codex uses TOML format in `~/.codex/config.toml`:
+
+    ```toml
+    model_instructions_file = "/home/user/.codex/fenkit-instructions.md"
+
+    [mcp_servers.fenkit_read]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=read-runtime"]
+
+    [mcp_servers.fenkit_write]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=write-runtime"]
+
+    [mcp_servers.fenkit_admin]
+    command = "node"
+    args = ["/path/to/fenkit-mcp/dist/index.js", "--mode=admin"]
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>The `setup` command always uses the correct absolute path to the installed server binary. If you set up manually, replace `/path/to/fenkit-mcp/dist/index.js` with the actual path on your system.</Tip>

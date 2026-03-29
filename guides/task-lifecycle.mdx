@@ -1,0 +1,143 @@
+---
+title: "Task Lifecycle"
+description: "How Fenkit MCP tasks move from discovery through completion, with all status transitions and the standard agent flow."
+---
+
+Every task in Fenkit moves through a defined lifecycle. This page documents all task statuses, the standard agent flow from PROTOCOL.md, and the rules agents must follow at each phase.
+
+## Task statuses
+
+| Status | Meaning |
+|---|---|
+| `backlog` | Captured but not yet scheduled for active work |
+| `todo` | Scheduled and ready to be picked up |
+| `in_progress` | Actively being implemented |
+| `in_review` | Implementation complete, awaiting human review |
+| `done` | Accepted and closed |
+| `frozen` | Paused indefinitely; blocked or deprioritized |
+
+### Typical status flow
+
+```
+backlog → todo → in_progress → in_review → done
+                     ↑                ↓
+                  frozen ←────────────┘  (re-open)
+```
+
+`in_review` is set automatically when `update_task_walkthrough` is called — no separate `set_task_status` call is needed for that transition.
+
+<Note>
+`done` is a terminal state set by humans during review. Agents set tasks to `in_review` via `update_task_walkthrough`, never directly to `done`.
+</Note>
+
+---
+
+## Standard agent flow
+
+The following sequence is the canonical flow defined in the Fenkit protocol. Follow these steps in order at the start of every session and whenever context is reset.
+
+<Steps>
+  <Step title="Orientation">
+    Call `get_status` to check which project is currently active.
+
+    - If no project is active, call `list_projects` then `select_project`.
+    - If a `chat_id` is available for the current session, call `resolve_chat_task(chat_id)` **before** loading any task context.
+
+    `resolve_chat_task` returns one of three states:
+
+    | State | Meaning | Next action |
+    |---|---|---|
+    | `bound` | A task binding exists; compact context is returned | Continue with the returned task |
+    | `unbound` | No binding exists | Proceed with explicit task selection |
+    | `needs_confirmation` | Binding is ambiguous | Ask the user which task to bind |
+
+    <Note>
+    Never infer task binding from a chat title or name. If `chat_id` is missing, require explicit task selection. Silent auto-binding from `chat_name` is not permitted.
+    </Note>
+  </Step>
+
+  <Step title="Task discovery">
+    Use `list_tasks` or `search_tasks` to identify the task to work on.
+
+    ```
+    list_tasks(status="todo,in_progress")
+    search_tasks(query="add OAuth support")
+    ```
+
+    The default status filter for `list_tasks` is `todo,in_progress,in_review`. Pass a comma-separated `status` string to filter further.
+  </Step>
+
+  <Step title="Context loading">
+    Retrieve task context before making any changes.
+
+    - Start with `get_task_context_compact(taskId)` — this is the preferred, token-efficient snapshot.
+    - If the compact view is insufficient, call `get_task_context_full(taskId)` for the full plan and walkthrough text.
+    - To retrieve a single section without loading the full context, use `get_task_section(taskId, section)` where `section` is `plan`, `walkthrough`, or `mcp_context`.
+
+    Each context retrieval call also updates the chat-task heartbeat when a `chat_id` is present.
+  </Step>
+
+  <Step title="Planning">
+    Before writing any code, submit a structured implementation plan.
+
+    ```
+    update_task_plan(taskId, operation_id, plan, model, agent)
+    ```
+
+    When sensitive confirmation is enabled (`FENKIT_REQUIRE_CONFIRMATION=true`), use `execution_mode="preview"` first to receive a `confirmation_token`, then call again with `execution_mode="execute"` and that token.
+
+    See [Task Planning](/guides/planning) for the full plan schema and a complete example.
+  </Step>
+
+  <Step title="Execution">
+    When implementation begins, move the task to `in_progress`.
+
+    ```
+    set_task_status(taskId, "in_progress", operation_id, model, agent)
+    ```
+
+    Continue updating the plan if scope changes during implementation. All write operations (`set_task_status`, `set_task_priority`, `update_task_plan`, `update_task_walkthrough`) append an entry to the task's metadata history for traceability.
+  </Step>
+
+  <Step title="Completion">
+    After the implementation is verified, submit a walkthrough.
+
+    ```
+    update_task_walkthrough(taskId, operation_id, walkthrough, model, agent)
+    ```
+
+    Submitting a walkthrough **automatically moves the task to `in_review`**. No separate `set_task_status` call is required.
+
+    See [Task Walkthroughs](/guides/walkthroughs) for the full walkthrough schema and completion rules.
+  </Step>
+</Steps>
+
+---
+
+## Auto-invoke loop
+
+Fenkit MCP is designed for autonomous agents. The tool results returned by each call provide everything the agent needs to proceed — no manual copy-paste or human relay is required between steps.
+
+- `resolve_chat_task` returns compact context inline when state is `bound`.
+- `update_task_plan` in preview mode returns a `confirmation_token` directly in the response.
+- `update_task_walkthrough` returns the new `in_review` status confirmation in the response.
+
+The agent reads tool output and immediately invokes the next tool in the sequence.
+
+---
+
+## Write operation fields
+
+All write tools (`set_task_status`, `set_task_priority`, `update_task_plan`, `update_task_walkthrough`) require these fields for execution tracking:
+
+| Field | Required | Description |
+|---|---|---|
+| `model` | Yes | Model identifier, e.g. `claude-sonnet-4-20250514` |
+| `agent` | Yes | Client name, e.g. `cursor`, `claude-desktop` |
+| `operation_id` | Yes | Client-generated idempotency key (alphanumeric, dots, colons, dashes) |
+| `tokens` | No | Token usage object for this operation |
+| `chat_id` | No | Refreshes the chat-task binding heartbeat |
+
+<Tip>
+Use a stable, deterministic `operation_id` derived from the task ID and operation intent (e.g. `plan:task-abc123:2025-03-29`). This allows safe replay if a network error occurs mid-write.
+</Tip>

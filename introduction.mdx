@@ -1,0 +1,86 @@
+---
+title: "Introduction"
+description: "Fenkit MCP is an MCP server that bridges AI agents to the Fenkit task management platform, enabling autonomous task coordination without manual copy-paste."
+---
+
+## What is Fenkit MCP?
+
+Fenkit MCP is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that connects AI coding agents directly to the [Fenkit](https://fenkit.app) task management platform. Instead of manually copying task descriptions into your AI chat, switching tabs to update status, or writing progress notes after the fact, Fenkit MCP lets your agent discover, plan, execute, and document work autonomously — all in real time.
+
+The server runs alongside your AI client (Cursor, Claude, Windsurf, etc.) and exposes a set of tools that follow a structured task lifecycle protocol. Your agent reads task context, submits structured plans before coding, marks tasks in progress, and persists a walkthrough when done — all without leaving the coding session.
+
+## The problem it solves
+
+Working with AI agents today suffers from three recurring friction points:
+
+| Problem | Without Fenkit MCP | With Fenkit MCP |
+| --- | --- | --- |
+| **Fragmented context** | You paste task descriptions into chat manually, then repeat the process every session reset | Agent calls `get_task_context_compact` and always has the full, authoritative task context |
+| **No documentation** | Progress notes, decisions, and walkthroughs live only in chat history — never in your project tracker | Agent automatically persists structured plans and walkthroughs to Fenkit on every write |
+| **Invisible progress** | Your project board goes stale while the agent works | Task status updates in real time: `in_progress` → `in_review` as work completes |
+
+<Note>
+  Authentication is required before any task operations. Always call `get_status` at the start of a session. If not authenticated, use `login` to complete browser-based auth before proceeding.
+</Note>
+
+## Runtime modes
+
+Fenkit MCP runs as three separate server instances, each with a distinct set of capabilities. Your AI client connects to all three simultaneously after setup.
+
+| Mode | Flag | Purpose |
+| --- | --- | --- |
+| **read-runtime** | `--mode=read-runtime` | Read-only task discovery, context retrieval, resources, and prompts |
+| **write-runtime** | `--mode=write-runtime` | Mutating operations: update plans, walkthroughs, status, and priority |
+| **admin** | `--mode=admin` | Authentication (`login`) and client setup tools |
+
+This separation keeps write operations isolated from read operations, making it easy to audit what changed and when.
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="Zero-friction setup" icon="bolt">
+    One command installs and configures Fenkit MCP for any supported AI client. No manual JSON editing required.
+  </Card>
+  <Card title="Autonomous task lifecycle" icon="arrows-rotate">
+    Agents follow a structured protocol: orient → discover → plan → execute → complete, with every step synchronized to Fenkit.
+  </Card>
+  <Card title="Structured documentation" icon="file-lines">
+    Plans and walkthroughs are automatically persisted as structured Markdown artifacts — ready for team review without extra effort.
+  </Card>
+  <Card title="Idempotent writes" icon="shield-check">
+    All write operations accept an `operation_id` for safe replay. Duplicate calls return `duplicate_replayed` instead of double-writing.
+  </Card>
+  <Card title="Preview / execute flow" icon="eye">
+    Sensitive writes issue a `confirmation_token` in preview mode before mutating state, giving agents and users a clear approval gate.
+  </Card>
+  <Card title="Chat-task binding" icon="link">
+    Agents resolve the active task for a given `chat_id` at session start, maintaining continuity across context resets.
+  </Card>
+</CardGroup>
+
+## Supported AI clients
+
+Fenkit MCP supports automatic setup for 7 AI clients:
+
+| Client | Setup command |
+| --- | --- |
+| **Cursor** | `npx -y fenkit-mcp setup cursor` |
+| **Claude Desktop** | `npx -y fenkit-mcp setup claude` |
+| **Windsurf** | `npx -y fenkit-mcp setup windsurf` |
+| **Claude Code** | `npx -y fenkit-mcp setup claudecode` |
+| **Codex** | `npx -y fenkit-mcp setup codex` |
+| **OpenCode** | `npx -y fenkit-mcp setup opencode` |
+| **Antigravity** | `npx -y fenkit-mcp setup antigravity` |
+
+Each setup command writes the appropriate MCP config files and injects the Fenkit task protocol into the client's rules file so the agent knows how to use the tools automatically.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Get connected and working on your first task in under 5 minutes.
+  </Card>
+  <Card title="Core concepts" icon="book-open" href="/concepts">
+    Understand runtime modes, task lifecycle states, and the confirmation flow.
+  </Card>
+</CardGroup>
